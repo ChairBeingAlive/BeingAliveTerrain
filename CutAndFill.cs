@@ -13,8 +13,8 @@ namespace BeingAliveTerrain {
                "Compute the 'Cut and Fill' difference between two given terrains.", "Curve",
                "Primitive") {}
 
-    public override GH_Exposure Exposure = > GH_Exposure.primary;
-    public override Guid ComponentGuid = > new Guid("db9f6fd9-572d-4304-9fd9-230ee00c29fd");
+    public override GH_Exposure Exposure => GH_Exposure.primary;
+    public override Guid ComponentGuid => new Guid("db9f6fd9-572d-4304-9fd9-230ee00c29fd");
 
     protected override void RegisterInputParams(GH_InputParamManager pManager) {
       pManager.AddCurveParameter(
@@ -203,7 +203,7 @@ namespace BeingAliveTerrain {
       int yCount = (int)Math.Ceiling((bbox.Max.Y - bbox.Min.Y) / gridSize);
 
       // Find min and max height differences for color mapping (excluding zeros)
-      List<double> validDifferences = heightDifferences.Where(d = > d != 0).ToList();
+      List<double> validDifferences = heightDifferences.Where(d => d != 0).ToList();
       double minDiff = validDifferences.Count > 0 ? validDifferences.Min() : -1;
       double maxDiff = validDifferences.Count > 0 ? validDifferences.Max() : 1;
 
