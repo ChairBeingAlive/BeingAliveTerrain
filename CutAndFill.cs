@@ -110,7 +110,7 @@ namespace BeingAliveTerrain {
 
       foreach (Curve boundary in boundaries) {
         if (boundary == null || !boundary.IsPlanar()) {
-          AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Boundary curve must be planar");
+          AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "Boundary curve must be planar.");
           cutVolumes.Add(0);
           fillVolumes.Add(0);
           netVolumes.Add(0);
@@ -143,9 +143,9 @@ namespace BeingAliveTerrain {
         netVolumes.Add(boundaryFillVolume - boundaryCutVolume);
       }
 
-      // Create analysis mesh with Parula colormap
+      // Create analysis mesh with RedWhiteGreen colormap (white center for zero cut/fill)
       Mesh analysisMesh = CreateAnalysisMesh(gridCenters, existingHeights, heightDifferences,
-                                             boundaries, gridSize, combinedBbox, "Parula");
+                                             boundaries, gridSize, combinedBbox, "RedWhiteGreen");
 
 #region data output
       DA.SetData("AnalysisMesh", analysisMesh);
@@ -212,14 +212,21 @@ namespace BeingAliveTerrain {
       minDiff = -range;
       maxDiff = range;
 
+      // Calculate base Z level (average of bounding box Z values or 0)
+      double baseZ = (bbox.Min.Z + bbox.Max.Z) / 2.0;
+      if (double.IsNaN(baseZ))
+        baseZ = 0;
+
       // Add vertices and colors
       for (int i = 0; i < gridCenters.Count; i++) {
         Point3d center = gridCenters[i];
         double existingHeight = existingHeights[i];
         double heightDiff = heightDifferences[i];
 
-        // Use existing height for vertex Z coordinate, or 0 if invalid
-        double vertexZ = double.IsNaN(existingHeight) ? 0 : existingHeight;
+        // Calculate vertex Z based on height difference
+        // Use height difference to create 3D visualization
+        double vertexZ = baseZ + heightDiff;
+
         analysisMesh.Vertices.Add(center.X, center.Y, vertexZ);
 
         // Check if point is inside any boundary
@@ -238,7 +245,7 @@ namespace BeingAliveTerrain {
         // Apply color based on height difference and boundary status
         System.Drawing.Color color;
         if (!insideBoundary || heightDiff == 0) {
-          color = System.Drawing.Color.Gray;  // Flat/outside boundary
+          color = System.Drawing.Color.White;  // White for flat/outside boundary areas
         } else {
           // Use the specified colormap
           color = ColorMapHelper.MapValueToColor(heightDiff, minDiff, maxDiff, colorMap);
@@ -246,7 +253,7 @@ namespace BeingAliveTerrain {
         analysisMesh.VertexColors.Add(color);
       }
 
-      // Create mesh faces
+      // Create triangular mesh faces
       for (int i = 0; i < xCount - 1; i++) {
         for (int j = 0; j < yCount - 1; j++) {
           int v0 = i * yCount + j;
@@ -254,9 +261,14 @@ namespace BeingAliveTerrain {
           int v2 = (i + 1) * yCount + (j + 1);
           int v3 = i * yCount + (j + 1);
 
+          // Ensure all vertices are valid
           if (v0 < analysisMesh.Vertices.Count && v1 < analysisMesh.Vertices.Count &&
               v2 < analysisMesh.Vertices.Count && v3 < analysisMesh.Vertices.Count) {
-            analysisMesh.Faces.AddFace(v0, v1, v2, v3);
+            // Create two triangular faces instead of one quad face
+            // First triangle: v0, v1, v2
+            analysisMesh.Faces.AddFace(v0, v1, v2);
+            // Second triangle: v0, v2, v3
+            analysisMesh.Faces.AddFace(v0, v2, v3);
           }
         }
       }

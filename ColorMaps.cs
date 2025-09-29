@@ -169,6 +169,70 @@ namespace BeingAliveTerrain {
   }
 
   /// <summary>
+  /// Red-White-Blue colormap implementation (white center for cut/fill analysis)
+  /// </summary>
+  public class RedWhiteBlueColorMap : IColorMap {
+    public string Name => "RedWhiteBlue";
+
+    public Color GetColor(double value) {
+      value = Math.Max(0, Math.Min(1, value));
+
+      double r, g, b;
+
+      if (value < 0.5) {
+        // Interpolate from red (0) to white (0.5)
+        double t = value * 2; // Scale to [0,1]
+        r = 1.0;
+        g = t;
+        b = t;
+      } else {
+        // Interpolate from white (0.5) to blue (1)
+        double t = (value - 0.5) * 2; // Scale to [0,1]
+        r = 1.0 - t;
+        g = 1.0 - t;
+        b = 1.0;
+      }
+
+      return Color.FromArgb((int)(r * 255), (int)(g * 255), (int)(b * 255));
+    }
+  }
+
+  /// <summary>
+  /// Red-White-Green colormap implementation (white center with intensity fading)
+  /// </summary>
+  public class RedWhiteGreenColorMap : IColorMap {
+    public string Name => "RedWhiteGreen";
+
+    public Color GetColor(double value) {
+      value = Math.Max(0, Math.Min(1, value));
+
+      double r, g, b;
+
+      if (value < 0.5) {
+        // Interpolate from red (0) to white (0.5)
+        // As value approaches 0.5, colors fade to white
+        double t = value * 2; // Scale to [0,1]
+        double intensity = 1.0 - t; // Higher intensity when further from center
+        
+        r = 1.0; // Always red component
+        g = t; // Fade to white
+        b = t; // Fade to white
+      } else {
+        // Interpolate from white (0.5) to green (1)
+        // As value moves away from 0.5, colors get more intense
+        double t = (value - 0.5) * 2; // Scale to [0,1]
+        double intensity = t; // Higher intensity when further from center
+        
+        r = 1.0 - t; // Fade from white
+        g = 1.0; // Always green component
+        b = 1.0 - t; // Fade from white
+      }
+
+      return Color.FromArgb((int)(r * 255), (int)(g * 255), (int)(b * 255));
+    }
+  }
+
+  /// <summary>
   /// Utility class for color mapping operations
   /// </summary>
   public static class ColorMapHelper {
@@ -176,7 +240,7 @@ namespace BeingAliveTerrain {
     /// Available color maps
     /// </summary>
     public static readonly IColorMap[] AvailableColorMaps = {
-      new ParulaColorMap(), new JetColorMap(), new PlasmaColorMap(), new ViridisColorMap()
+      new ParulaColorMap(), new JetColorMap(), new PlasmaColorMap(), new ViridisColorMap(), new RedWhiteBlueColorMap(), new RedWhiteGreenColorMap()
     };
 
     /// <summary>
