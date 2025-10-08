@@ -10,8 +10,8 @@ namespace BeingAliveTerrain {
   public class CutAndFill : GH_Component {
     public CutAndFill()
         : base("CutFill", "batCut",
-               "Compute the 'Cut and Fill' difference between two given terrains.", "Curve",
-               "Primitive") {}
+               "Compute the 'Cut and Fill' difference between two given terrains.", "BAT",
+               "MeshAnalysis") {}
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("db9f6fd9-572d-4304-9fd9-230ee00c29fd");
