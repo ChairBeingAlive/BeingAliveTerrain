@@ -142,7 +142,7 @@ jobs:
       # Build C# Project first - does NOT rebuild C++
       - name: Build C# Project
         run: |
-          $solutionPath = "${{ github.workspace }}\igm.slnx"
+          $solutionPath = "${{ github.workspace }}\BeingAliveTerrain.slnx"
           msbuild ${{ env.CSProj_Path }} `
             /p:Configuration=${{ env.Configuration }} `
             /p:Platform=AnyCPU `
