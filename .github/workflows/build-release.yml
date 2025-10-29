@@ -255,12 +255,10 @@ jobs:
           name: release-packages
           path: |
             ${{ env.ARTIFACTS_DIR }}/*.yak
-            # ${{ env.ARTIFACTS_DIR }}/releaseRH8/
-            # ${{ env.ARTIFACTS_DIR }}/bin/
 
       # Push to Yak server
       - name: Push to Yak Server
-        if: github.ref_type == 'tag' && env.YAK_TOKEN != ''
+        if: github.ref_type == 'tag' && secrets.YAK_TOKEN != ''
         shell: pwsh
         run: |
           Write-Host "Pushing .yak package to Yak server..."
