@@ -258,7 +258,7 @@ jobs:
 
       # Push to Yak server
       - name: Push to Yak Server
-        if: github.ref_type == 'tag' && secrets.YAK_TOKEN != ''
+        if: github.ref_type == 'tag' && env.YAK_TOKEN != ''
         shell: pwsh
         run: |
           Write-Host "Pushing .yak package to Yak server..."
