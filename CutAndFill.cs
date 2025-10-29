@@ -1,13 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Forms;
 
-using Grasshopper;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
 
 namespace BeingAliveTerrain {
   public class CutAndFill : GH_Component {
+    // Store the selected color map name
+    private string selectedColorMap = "RedWhiteGreen";
+
     public CutAndFill()
         : base("CutFill", "batCut",
                "Compute the 'Cut and Fill' difference between two given terrains.", "BAT",
@@ -36,6 +39,12 @@ namespace BeingAliveTerrain {
     protected override void RegisterOutputParams(GH_OutputParamManager pManager) {
       pManager.AddMeshParameter("AnalysisMesh", "M", "Mesh showing the cut and fill analysis.",
                                 GH_ParamAccess.item);
+      pManager.AddMeshParameter("CutMeshes", "CM",
+                                "Mesh faces in cut areas (where material is removed).",
+                                GH_ParamAccess.list);
+      pManager.AddMeshParameter("FillMeshes", "FM",
+                                "Mesh faces in fill areas (where material is added).",
+                                GH_ParamAccess.list);
       pManager.AddNumberParameter(
           "CutVolume", "C", "Volume of material that needs to be excavated.", GH_ParamAccess.list);
       pManager.AddNumberParameter("FillVolume", "F", "Volume of material that needs to be added.",
@@ -143,12 +152,18 @@ namespace BeingAliveTerrain {
         netVolumes.Add(boundaryFillVolume - boundaryCutVolume);
       }
 
-      // Create analysis mesh with RedWhiteGreen colormap (white center for zero cut/fill)
+      // Create analysis mesh with selected colormap
       Mesh analysisMesh = CreateAnalysisMesh(gridCenters, existingHeights, heightDifferences,
-                                             boundaries, gridSize, combinedBbox, "RedWhiteGreen");
+                                             boundaries, gridSize, combinedBbox, selectedColorMap);
+
+      // Extract cut and fill mesh pieces
+      var (cutMeshes, fillMeshes) =
+          ExtractCutFillMeshes(analysisMesh, heightDifferences, boundaries, gridSize, combinedBbox);
 
 #region data output
       DA.SetData("AnalysisMesh", analysisMesh);
+      DA.SetDataList("CutMeshes", cutMeshes);
+      DA.SetDataList("FillMeshes", fillMeshes);
       DA.SetDataList("CutVolume", cutVolumes);
       DA.SetDataList("FillVolume", fillVolumes);
       DA.SetDataList("NetVolume", netVolumes);
@@ -274,6 +289,173 @@ namespace BeingAliveTerrain {
       }
 
       return analysisMesh;
+    }
+
+    /// <summary>
+    /// Extract cut and fill mesh pieces by filtering faces based on vertex height differences
+    /// </summary>
+    private (List<Mesh> cutMeshes, List<Mesh> fillMeshes)
+        ExtractCutFillMeshes(Mesh analysisMesh, List<double> heightDifferences,
+                             List<Curve> boundaries, double gridSize, BoundingBox bbox) {
+      List<Mesh> cutMeshes = new List<Mesh>();
+      List<Mesh> fillMeshes = new List<Mesh>();
+
+      // Create separate meshes for cut and fill
+      Mesh cutMesh = new Mesh();
+      Mesh fillMesh = new Mesh();
+
+      // Iterate through all faces in the analysis mesh
+      for (int faceIdx = 0; faceIdx < analysisMesh.Faces.Count; faceIdx++) {
+        MeshFace face = analysisMesh.Faces[faceIdx];
+
+        // Get the vertices of this face
+        int v0 = face.A;
+        int v1 = face.B;
+        int v2 = face.C;
+        bool isQuad = face.IsQuad;
+        int v3 = isQuad ? face.D : -1;
+
+        // Check if any vertex is out of bounds
+        if (v0 >= heightDifferences.Count || v1 >= heightDifferences.Count ||
+            v2 >= heightDifferences.Count || (isQuad && v3 >= heightDifferences.Count)) {
+          continue;
+        }
+
+        // Get height differences for the face vertices
+        double val0 = heightDifferences[v0];
+        double val1 = heightDifferences[v1];
+        double val2 = heightDifferences[v2];
+        double val3 = isQuad ? heightDifferences[v3] : 0;
+
+        // Calculate average height difference for the face
+        double avgHeight = isQuad ? (val0 + val1 + val2 + val3) / 4.0 : (val0 + val1 + val2) / 3.0;
+
+        // Check if face center is inside any boundary
+        Point3d faceCenter =
+            isQuad ? new Point3d((analysisMesh.Vertices[v0].X + analysisMesh.Vertices[v1].X +
+                                  analysisMesh.Vertices[v2].X + analysisMesh.Vertices[v3].X) /
+                                     4.0,
+                                 (analysisMesh.Vertices[v0].Y + analysisMesh.Vertices[v1].Y +
+                                  analysisMesh.Vertices[v2].Y + analysisMesh.Vertices[v3].Y) /
+                                     4.0,
+                                 (analysisMesh.Vertices[v0].Z + analysisMesh.Vertices[v1].Z +
+                                  analysisMesh.Vertices[v2].Z + analysisMesh.Vertices[v3].Z) /
+                                     4.0)
+                   : new Point3d((analysisMesh.Vertices[v0].X + analysisMesh.Vertices[v1].X +
+                                  analysisMesh.Vertices[v2].X) /
+                                     3.0,
+                                 (analysisMesh.Vertices[v0].Y + analysisMesh.Vertices[v1].Y +
+                                  analysisMesh.Vertices[v2].Y) /
+                                     3.0,
+                                 (analysisMesh.Vertices[v0].Z + analysisMesh.Vertices[v1].Z +
+                                  analysisMesh.Vertices[v2].Z) /
+                                     3.0);
+
+        bool insideBoundary = false;
+        foreach (Curve boundary in boundaries) {
+          if (boundary != null && boundary.IsPlanar()) {
+            if (boundary.Contains(new Point3d(faceCenter.X, faceCenter.Y, 0), Plane.WorldXY,
+                                  0.01) != PointContainment.Outside) {
+              insideBoundary = true;
+              break;
+            }
+          }
+        }
+
+        if (!insideBoundary)
+          continue;
+
+        // Classify face as cut or fill based on average height difference
+        double threshold = 0.001;
+        if (avgHeight < -threshold) {
+          // Cut face - add to cut mesh
+          int newV0 = cutMesh.Vertices.Add(analysisMesh.Vertices[v0]);
+          int newV1 = cutMesh.Vertices.Add(analysisMesh.Vertices[v1]);
+          int newV2 = cutMesh.Vertices.Add(analysisMesh.Vertices[v2]);
+
+          cutMesh.VertexColors.Add(analysisMesh.VertexColors[v0]);
+          cutMesh.VertexColors.Add(analysisMesh.VertexColors[v1]);
+          cutMesh.VertexColors.Add(analysisMesh.VertexColors[v2]);
+
+          if (isQuad && v3 >= 0) {
+            int newV3 = cutMesh.Vertices.Add(analysisMesh.Vertices[v3]);
+            cutMesh.VertexColors.Add(analysisMesh.VertexColors[v3]);
+            cutMesh.Faces.AddFace(newV0, newV1, newV2, newV3);
+          } else {
+            cutMesh.Faces.AddFace(newV0, newV1, newV2);
+          }
+        } else if (avgHeight > threshold) {
+          // Fill face - add to fill mesh
+          int newV0 = fillMesh.Vertices.Add(analysisMesh.Vertices[v0]);
+          int newV1 = fillMesh.Vertices.Add(analysisMesh.Vertices[v1]);
+          int newV2 = fillMesh.Vertices.Add(analysisMesh.Vertices[v2]);
+
+          fillMesh.VertexColors.Add(analysisMesh.VertexColors[v0]);
+          fillMesh.VertexColors.Add(analysisMesh.VertexColors[v1]);
+          fillMesh.VertexColors.Add(analysisMesh.VertexColors[v2]);
+
+          if (isQuad && v3 >= 0) {
+            int newV3 = fillMesh.Vertices.Add(analysisMesh.Vertices[v3]);
+            fillMesh.VertexColors.Add(analysisMesh.VertexColors[v3]);
+            fillMesh.Faces.AddFace(newV0, newV1, newV2, newV3);
+          } else {
+            fillMesh.Faces.AddFace(newV0, newV1, newV2);
+          }
+        }
+      }
+
+      // Add meshes to lists if they have faces
+      if (cutMesh.Faces.Count > 0) {
+        cutMesh.Normals.ComputeNormals();
+        cutMesh.Compact();
+        cutMeshes.Add(cutMesh);
+      }
+
+      if (fillMesh.Faces.Count > 0) {
+        fillMesh.Normals.ComputeNormals();
+        fillMesh.Compact();
+        fillMeshes.Add(fillMesh);
+      }
+
+      return (cutMeshes, fillMeshes);
+    }
+
+    // Add right-click menu for color map selection using Eto
+    // (cross-platform)
+    public override void AppendAdditionalMenuItems(ToolStripDropDown menu) {
+      base.AppendAdditionalMenuItems(menu);
+
+      // Add a separator
+      Menu_AppendSeparator(menu);
+
+      // Add color map selection submenu
+      var colorMapMenu = Menu_AppendItem(menu, "Color Map");
+
+      foreach (var colorMap in ColorMapHelper.AvailableColorMaps) {
+        Menu_AppendItem(colorMapMenu.DropDown, colorMap.Name, OnColorMapSelected, true,
+                        colorMap.Name == selectedColorMap)
+            .Tag = colorMap.Name;
+      }
+    }
+
+    private void OnColorMapSelected(object sender, EventArgs e) {
+      if (sender is ToolStripMenuItem item && item.Tag is string colorMapName) {
+        selectedColorMap = colorMapName;
+        ExpireSolution(true);  // Recompute with new color map
+      }
+    }
+
+    // Override read/write to persist color map selection
+    public override bool Write(GH_IO.Serialization.GH_IWriter writer) {
+      writer.SetString("ColorMap", selectedColorMap);
+      return base.Write(writer);
+    }
+
+    public override bool Read(GH_IO.Serialization.GH_IReader reader) {
+      if (reader.ItemExists("ColorMap")) {
+        selectedColorMap = reader.GetString("ColorMap");
+      }
+      return base.Read(reader);
     }
   }
 }  // namespace BeingAliveTerrain
