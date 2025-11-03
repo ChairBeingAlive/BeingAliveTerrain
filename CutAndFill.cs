@@ -18,6 +18,7 @@ namespace BeingAliveTerrain {
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("db9f6fd9-572d-4304-9fd9-230ee00c29fd");
+    protected override System.Drawing.Bitmap Icon => Properties.Resources.cutAndFill;
 
     protected override void RegisterInputParams(GH_InputParamManager pManager) {
       pManager.AddCurveParameter(

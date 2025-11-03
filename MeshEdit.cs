@@ -48,6 +48,7 @@ namespace BeingAliveTerrain {
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("6e3e71c3-92f1-4158-8b45-0cdb4efb52da");
+    protected override System.Drawing.Bitmap Icon => Properties.Resources.pointEdit;
 
     protected override void RegisterInputParams(GH_InputParamManager pManager) {
       pManager.AddMeshParameter("Mesh", "M", "Mesh to edit", GH_ParamAccess.item);
@@ -181,6 +182,7 @@ namespace BeingAliveTerrain {
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("7e4e81d3-93f2-4259-9b46-1cdb5efb62db");
+    protected override System.Drawing.Bitmap Icon => Properties.Resources.curveEdit;
 
     protected override void RegisterInputParams(GH_InputParamManager pManager) {
       pManager.AddMeshParameter("Mesh", "M", "Mesh to edit", GH_ParamAccess.item);
@@ -331,6 +333,7 @@ namespace BeingAliveTerrain {
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("8e5e91e3-94f3-4360-9c47-2cdb6efb73dc");
+    protected override System.Drawing.Bitmap Icon => Properties.Resources.areaEdit;
 
     protected override void RegisterInputParams(GH_InputParamManager pManager) {
       pManager.AddMeshParameter("Mesh", "M", "Mesh to edit", GH_ParamAccess.item);
@@ -516,22 +519,25 @@ namespace BeingAliveTerrain {
           if (influence > 0) {
             double displacement = 0;
 
-            if (flat && averageHeights.ContainsKey(curveIndex) && 
-                (containment == PointContainment.Inside || containment == PointContainment.Coincident)) {
-              // Flat mode for inside/coincident vertices: 
+            if (flat && averageHeights.ContainsKey(curveIndex) &&
+                (containment == PointContainment.Inside ||
+                 containment == PointContainment.Coincident)) {
+              // Flat mode for inside/coincident vertices:
               // Calculate adjusted average height based on strength moving toward border height
               double averageHeight = averageHeights[curveIndex];
               double borderHeight = targetHeight;
               double adjustedAverageHeight;
-              
+
               if (strength > 0) {
                 // Positive strength: move average height toward border height
-                adjustedAverageHeight = averageHeight + (borderHeight - averageHeight) * (strength / 100.0);
+                adjustedAverageHeight =
+                    averageHeight + (borderHeight - averageHeight) * (strength / 100.0);
               } else {
                 // Negative strength: move average height away from border height
-                adjustedAverageHeight = averageHeight - (borderHeight - averageHeight) * (Math.Abs(strength) / 100.0);
+                adjustedAverageHeight =
+                    averageHeight - (borderHeight - averageHeight) * (Math.Abs(strength) / 100.0);
               }
-              
+
               // All inside vertices move to this adjusted average height
               displacement = adjustedAverageHeight - vertex.Z;
             } else if (flat && averageHeights.ContainsKey(curveIndex)) {
@@ -539,13 +545,15 @@ namespace BeingAliveTerrain {
               double averageHeight = averageHeights[curveIndex];
               double borderHeight = targetHeight;
               double adjustedAverageHeight;
-              
+
               if (strength > 0) {
-                adjustedAverageHeight = averageHeight + (borderHeight - averageHeight) * (strength / 100.0);
+                adjustedAverageHeight =
+                    averageHeight + (borderHeight - averageHeight) * (strength / 100.0);
               } else {
-                adjustedAverageHeight = averageHeight - (borderHeight - averageHeight) * (Math.Abs(strength) / 100.0);
+                adjustedAverageHeight =
+                    averageHeight - (borderHeight - averageHeight) * (Math.Abs(strength) / 100.0);
               }
-              
+
               // Outside vertices transition toward adjusted average height with influence falloff
               displacement = (adjustedAverageHeight - vertex.Z) * influence;
             } else {
@@ -553,7 +561,8 @@ namespace BeingAliveTerrain {
               if (strength > 0) {
                 displacement = (targetHeight - vertex.Z) * (strength / 100.0) * influence;
               } else {
-                displacement = -(targetHeight - vertex.Z) * (Math.Abs(strength) / 100.0) * influence;
+                displacement =
+                    -(targetHeight - vertex.Z) * (Math.Abs(strength) / 100.0) * influence;
               }
             }
 

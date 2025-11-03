@@ -24,8 +24,30 @@
   </PropertyGroup>
   
   <ItemGroup>
+    <Compile Remove="Properties\icons\**" />
+    <EmbeddedResource Remove="Properties\icons\**" />
+    <None Remove="Properties\icons\**" />
+    <Page Remove="Properties\icons\**" />
+  </ItemGroup>
+  
+  <ItemGroup>
     <PackageReference Include="Grasshopper" Version="8.21.25188.17001" ExcludeAssets="runtime" />
     <PackageReference Include="System.Drawing.Common" Version="8.0.21" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <Compile Update="Properties\Resources.Designer.cs">
+      <DesignTime>True</DesignTime>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  
+  <ItemGroup>
+    <EmbeddedResource Update="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
   </ItemGroup>
   
   <!-- For Windows only builds -->
