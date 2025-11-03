@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-![BeingAliveTerrain Icon](.github/title_icon.png)
+<img src=".github/title_icon.png" alt="BeingAliveTerrain Icon" width="50%">
 
 # BeingAliveTerrain
 
@@ -97,7 +97,7 @@ If `BeingAliveTerrain` contributes to an academic publication, please cite it as
   title = {BeingAliveTerrain},
   author = {Zhao Ma},
   url = {https://github.com/ChairBeingAlive/BeingAliveTerrain},
-  version = {0.1.3},
+version = {0.1.3},
   year = {2024}
 }
 ```
