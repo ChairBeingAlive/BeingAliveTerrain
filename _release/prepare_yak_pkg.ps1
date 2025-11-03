@@ -40,10 +40,10 @@ if (Test-Path "manifest.yml")
 
 # Copy files and icon - use the determined bin folder path 
 Copy-Item -Path "${binFolder}\Release\*" -Destination "." -Recurse -ErrorAction SilentlyContinue
-Copy-Item -Path "${currentFolder}\icon_new.png" -Destination "." -Recurse
+Copy-Item -Path "${currentFolder}\appIcon.png" -Destination "." -Recurse
 
 ./../yak.exe spec; 
-Add-Content manifest.yml "`nicon: icon_new.png"
+Add-Content manifest.yml "`nicon: appIcon.png"
 Add-Content manifest.yml "`nkeywords: `n - drawing `n - climate `n - soil `n - language"
 
 Write-Host "======================================="
