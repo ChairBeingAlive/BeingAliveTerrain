@@ -1,8 +1,14 @@
-﻿# BeingAliveTerrain
+﻿<div align="center">
+
+![BeingAliveTerrain Icon](.github/title_icon.png)
+
+# BeingAliveTerrain
 
 [![License](https://img.shields.io/badge/Rhino-8.0-9cf?style=flat-square)](https://www.rhino3d.com/8/)
 [![License](https://img.shields.io/badge/Grasshopper-1.0-brightgreen?style=flat-square)](https://www.grasshopper3d.com/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE.txt)
+
+</div>
 
 ## Introduction
 
