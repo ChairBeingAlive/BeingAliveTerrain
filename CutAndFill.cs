@@ -14,7 +14,7 @@ namespace BeingAliveTerrain {
     public CutAndFill()
         : base("CutFill", "batCut",
                "Compute the 'Cut and Fill' difference between two given terrains.", "BAT",
-               "MeshAnalysis") {}
+               "Analysis") {}
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("db9f6fd9-572d-4304-9fd9-230ee00c29fd");

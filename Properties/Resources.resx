@@ -133,4 +133,7 @@
   <data name="pointEdit" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\data\icons\pointEdit.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
   </data>
+  <data name="rainSim" type="System.Resources.ResXFileRef, System.Windows.Forms">
+    <value>..\data\icons\rainSim.png;System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a</value>
+  </data>
 </root>

@@ -44,7 +44,7 @@ namespace BeingAliveTerrain {
   public class PointEdit : GH_Component {
     public PointEdit()
         : base("TerrainPointEdit", "batPtTerrain", "Using a point to pull/push the mesh terrain.",
-               "BAT", "MeshEdit") {}
+               "BAT", "Edit") {}
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("6e3e71c3-92f1-4158-8b45-0cdb4efb52da");
@@ -178,7 +178,7 @@ namespace BeingAliveTerrain {
   public class CurveEdit : GH_Component {
     public CurveEdit()
         : base("TerrainCurveEdit", "batCrvTerrain", "Using a curve to pull/push the mesh terrain.",
-               "BAT", "MeshEdit") {}
+               "BAT", "Edit") {}
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("7e4e81d3-93f2-4259-9b46-1cdb5efb62db");
@@ -329,7 +329,7 @@ namespace BeingAliveTerrain {
     public AreaEdit()
         : base("TerrainAreaEdit", "batAreaTerrain",
                "Using a closed curve to pull/push the mesh terrain within the area.", "BAT",
-               "MeshEdit") {}
+               "Edit") {}
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("8e5e91e3-94f3-4360-9c47-2cdb6efb73dc");
