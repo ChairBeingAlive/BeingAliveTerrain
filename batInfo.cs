@@ -20,10 +20,10 @@ namespace BeingAliveTerrain {
     public override string AuthorName => "Dr.Zhao.MA";
 
     // Return a string representing your preferred contact details.
-    public override string AuthorContact => "zhma@ethz.ch";
+    public override string AuthorContact => "https://github.com/ChairBeingAlive/BeingAliveTerrain";
 
     // public override string AssemblyVersion => GetType().Assembly.GetName().Version.ToString();
-    public override string AssemblyVersion => "0.1.7";
+    public override string AssemblyVersion => "0.1.8";
 
     // this is currently the variable used by McNeel for plugin system
     public override string Version => AssemblyVersion;

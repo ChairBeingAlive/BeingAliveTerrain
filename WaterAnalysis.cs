@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using Grasshopper;
 using Grasshopper.Kernel;
 using Rhino.Geometry;
@@ -154,6 +155,252 @@ namespace BeingAliveTerrain {
       }
 
       return flowPath;
+    }
+  }
+
+  public class SlopeAnalysis : GH_Component {
+    // Store the selected color map name
+    private string selectedColorMap = "Viridis";
+
+    public SlopeAnalysis()
+        : base("SlopeAnalysis", "batSlope",
+               "Analyze terrain slope and visualize with color-coded mesh.", "BAT", "Analysis") {}
+
+    public override GH_Exposure Exposure => GH_Exposure.primary;
+    public override Guid ComponentGuid => new Guid("2f4d8bc6-420c-4bf8-a094-e18a1e74981b");
+    protected override System.Drawing.Bitmap Icon => Properties.Resources.pointEdit;
+
+    protected override void RegisterInputParams(GH_InputParamManager pManager) {
+      pManager.AddMeshParameter("Mesh", "M", "Terrain mesh to analyze.", GH_ParamAccess.item);
+      pManager.AddNumberParameter(
+          "GridSize", "G",
+          "Grid size for sampling terrain. Smaller values give more detail but slower computation.",
+          GH_ParamAccess.item, 10.0);
+
+      pManager[1].Optional = true;
+    }
+
+    protected override void RegisterOutputParams(GH_OutputParamManager pManager) {
+      pManager.AddMeshParameter(
+          "AnalysisMesh", "M",
+          "Color-coded mesh showing slope analysis (0° = flat, 90° = vertical).",
+          GH_ParamAccess.item);
+      pManager.AddPointParameter("SamplePoints", "P", "Grid points where slope was sampled.",
+                                 GH_ParamAccess.list);
+      pManager.AddNumberParameter("SlopeValues", "S", "Slope angle at each sample point (degrees).",
+                                  GH_ParamAccess.list);
+      pManager.AddVectorParameter("SlopeVectors", "V",
+                                  "Direction vectors showing downhill direction at each point.",
+                                  GH_ParamAccess.list);
+    }
+
+    protected override void SolveInstance(IGH_DataAccess DA) {
+      Mesh terrain = null;
+      double gridSize = 10.0;
+
+      // Get input data
+      if (!DA.GetData("Mesh", ref terrain))
+        return;
+      if (!DA.GetData("GridSize", ref gridSize))
+        return;
+
+      // Validate inputs
+      if (terrain == null) {
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Input terrain mesh cannot be null");
+        return;
+      }
+
+      if (gridSize <= 0) {
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "GridSize must be positive");
+        gridSize = Math.Max(0.1, gridSize);
+      }
+
+      // Get terrain bounding box
+      BoundingBox bbox = terrain.GetBoundingBox(false);
+
+      // Use half grid size for gradient sampling
+      double sampleDistance = gridSize * 0.5;
+
+      // Pre-compute gradient map for the entire terrain
+      GradientMap gradientMap =
+          TerrainAnalysisUtils.PrecomputeGradientMap(terrain, bbox, gridSize, sampleDistance);
+
+      // Create lists for output data
+      List<Point3d> samplePoints = new List<Point3d>();
+      List<double> slopeValues = new List<double>();
+      List<Vector3d> slopeVectors = new List<Vector3d>();
+
+      // Collect data from gradient map
+      for (int i = 0; i < gradientMap.XCount; i++) {
+        for (int j = 0; j < gradientMap.YCount; j++) {
+          double x = bbox.Min.X + (i + 0.5) * gridSize;
+          double y = bbox.Min.Y + (j + 0.5) * gridSize;
+          double z = gradientMap.Heights[i, j];
+
+          // Skip invalid heights
+          if (double.IsNaN(z)) {
+            continue;
+          }
+
+          Point3d point = new Point3d(x, y, z);
+          double slope = gradientMap.Slopes[i, j];
+          Vector3d gradient = gradientMap.Gradients[i, j];
+
+          // Calculate downhill direction vector (negative gradient, normalized)
+          Vector3d downhillDir = Vector3d.Zero;
+          if (gradient != Vector3d.Zero) {
+            downhillDir = new Vector3d(-gradient.X, -gradient.Y, 0);
+            downhillDir.Unitize();
+            // Scale vector by grid size for visualization
+            downhillDir *= gridSize;
+          }
+
+          samplePoints.Add(point);
+          slopeValues.Add(slope);
+          slopeVectors.Add(downhillDir);
+        }
+      }
+
+      // Create analysis mesh with color coding
+      Mesh analysisMesh = CreateSlopeAnalysisMesh(gradientMap, bbox, gridSize, selectedColorMap);
+
+      // Output results
+      DA.SetData("AnalysisMesh", analysisMesh);
+      DA.SetDataList("SamplePoints", samplePoints);
+      DA.SetDataList("SlopeValues", slopeValues);
+      DA.SetDataList("SlopeVectors", slopeVectors);
+    }
+
+    /// <summary>
+    /// Create a color-coded mesh showing slope analysis
+    /// </summary>
+    private Mesh CreateSlopeAnalysisMesh(GradientMap gradientMap, BoundingBox bbox, double gridSize,
+                                         string colorMapName) {
+      Mesh analysisMesh = new Mesh();
+
+      // Get the specified color map
+      IColorMap colorMap = ColorMapHelper.GetColorMap(colorMapName);
+
+      int xCount = gradientMap.XCount;
+      int yCount = gradientMap.YCount;
+
+      // Find min and max slope for color mapping
+      double minSlope = 0.0;   // Always start at 0 degrees
+      double maxSlope = 90.0;  // Maximum possible slope
+
+      // Find actual max slope in the data for better color distribution
+      double actualMaxSlope = 0.0;
+      for (int i = 0; i < xCount; i++) {
+        for (int j = 0; j < yCount; j++) {
+          if (!double.IsNaN(gradientMap.Slopes[i, j])) {
+            actualMaxSlope = Math.Max(actualMaxSlope, gradientMap.Slopes[i, j]);
+          }
+        }
+      }
+
+      // Use actual max slope if it's reasonable, otherwise use 90 degrees
+      if (actualMaxSlope > 0 && actualMaxSlope < 90) {
+        maxSlope = actualMaxSlope;
+      }
+
+      // Create a mapping from grid indices to vertex indices (for handling NaN values)
+      int[,] vertexIndexMap = new int[xCount, yCount];
+      for (int i = 0; i < xCount; i++) {
+        for (int j = 0; j < yCount; j++) {
+          vertexIndexMap[i, j] = -1; // -1 means invalid/not added
+        }
+      }
+
+      // Add vertices and colors (only for valid points)
+      for (int i = 0; i < xCount; i++) {
+        for (int j = 0; j < yCount; j++) {
+          double x = bbox.Min.X + (i + 0.5) * gridSize;
+          double y = bbox.Min.Y + (j + 0.5) * gridSize;
+          double z = gradientMap.Heights[i, j];
+          double slope = gradientMap.Slopes[i, j];
+
+          // Only add vertex if height is valid
+          if (!double.IsNaN(z)) {
+            // Store the vertex index for this grid location
+            vertexIndexMap[i, j] = analysisMesh.Vertices.Count;
+            
+            analysisMesh.Vertices.Add(x, y, z);
+
+            // Map slope value to color
+            System.Drawing.Color color;
+            if (double.IsNaN(slope)) {
+              color = System.Drawing.Color.White;  // White for invalid slope
+            } else {
+              color = ColorMapHelper.MapValueToColor(slope, minSlope, maxSlope, colorMap);
+            }
+
+            analysisMesh.VertexColors.Add(color);
+          }
+        }
+      }
+
+      // Create triangular mesh faces (only for quads where all 4 vertices are valid)
+      for (int i = 0; i < xCount - 1; i++) {
+        for (int j = 0; j < yCount - 1; j++) {
+          // Get vertex indices for the quad
+          int v0 = vertexIndexMap[i, j];
+          int v1 = vertexIndexMap[i + 1, j];
+          int v2 = vertexIndexMap[i + 1, j + 1];
+          int v3 = vertexIndexMap[i, j + 1];
+
+          // Only create faces if all 4 vertices are valid
+          if (v0 >= 0 && v1 >= 0 && v2 >= 0 && v3 >= 0) {
+            // Create two triangular faces
+            analysisMesh.Faces.AddFace(v0, v1, v2);
+            analysisMesh.Faces.AddFace(v0, v2, v3);
+          }
+        }
+      }
+
+      // Compact the mesh to remove any unused vertices
+      analysisMesh.Compact();
+      analysisMesh.Normals.ComputeNormals();
+      
+      return analysisMesh;
+    }
+
+    // Add right-click menu for color map selection (flat structure for cross-platform)
+    public override void AppendAdditionalMenuItems(ToolStripDropDown menu) {
+      base.AppendAdditionalMenuItems(menu);
+
+      // Add a separator
+      Menu_AppendSeparator(menu);
+
+      // Add color map header (disabled)
+      var headerItem = Menu_AppendItem(menu, "Color Map:");
+      headerItem.Enabled = false;
+
+      // Add each color map as a direct menu item
+      foreach (var colorMap in ColorMapHelper.AvailableColorMaps) {
+        Menu_AppendItem(menu, "  " + colorMap.Name, OnColorMapSelected, true,
+                        colorMap.Name == selectedColorMap)
+            .Tag = colorMap.Name;
+      }
+    }
+
+    private void OnColorMapSelected(object sender, EventArgs e) {
+      if (sender is ToolStripMenuItem item && item.Tag is string colorMapName) {
+        selectedColorMap = colorMapName;
+        ExpireSolution(true);  // Recompute with new color map
+      }
+    }
+
+    // Override read/write to persist color map selection
+    public override bool Write(GH_IO.Serialization.GH_IWriter writer) {
+      writer.SetString("ColorMap", selectedColorMap);
+      return base.Write(writer);
+    }
+
+    public override bool Read(GH_IO.Serialization.GH_IReader reader) {
+      if (reader.ItemExists("ColorMap")) {
+        selectedColorMap = reader.GetString("ColorMap");
+      }
+      return base.Read(reader);
     }
   }
 }
