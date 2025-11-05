@@ -421,19 +421,22 @@ namespace BeingAliveTerrain {
       return (cutMeshes, fillMeshes);
     }
 
-    // Add right-click menu for color map selection using Eto
-    // (cross-platform)
+    // Add right-click menu for color map selection
+    // Using flat menu structure for cross-platform compatibility (Windows & macOS)
     public override void AppendAdditionalMenuItems(ToolStripDropDown menu) {
       base.AppendAdditionalMenuItems(menu);
 
       // Add a separator
       Menu_AppendSeparator(menu);
 
-      // Add color map selection submenu
-      var colorMapMenu = Menu_AppendItem(menu, "Color Map");
+      // Add color map items directly to the menu (flat structure for macOS compatibility)
+      // Use a header item that is disabled to show the category
+      var headerItem = Menu_AppendItem(menu, "Color Map:");
+      headerItem.Enabled = false;
 
+      // Add each color map as a direct menu item (not nested)
       foreach (var colorMap in ColorMapHelper.AvailableColorMaps) {
-        Menu_AppendItem(colorMapMenu.DropDown, colorMap.Name, OnColorMapSelected, true,
+        Menu_AppendItem(menu, "  " + colorMap.Name, OnColorMapSelected, true,
                         colorMap.Name == selectedColorMap)
             .Tag = colorMap.Name;
       }
