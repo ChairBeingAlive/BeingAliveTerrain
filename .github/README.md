@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-<img src=".github/title_icon.png" alt="BeingAliveTerrain Icon" width="50%">
+<img src="./title_icon.png" alt="BeingAliveTerrain Icon" width="50%">
 
 # BeingAliveTerrain
 
