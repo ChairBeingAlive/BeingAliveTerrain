@@ -168,7 +168,7 @@ namespace BeingAliveTerrain {
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
     public override Guid ComponentGuid => new Guid("2f4d8bc6-420c-4bf8-a094-e18a1e74981b");
-    protected override System.Drawing.Bitmap Icon => Properties.Resources.pointEdit;
+    protected override System.Drawing.Bitmap Icon => Properties.Resources.slopeAnalysis;
 
     protected override void RegisterInputParams(GH_InputParamManager pManager) {
       pManager.AddMeshParameter("Mesh", "M", "Terrain mesh to analyze.", GH_ParamAccess.item);
@@ -176,14 +176,20 @@ namespace BeingAliveTerrain {
           "GridSize", "G",
           "Grid size for sampling terrain. Smaller values give more detail but slower computation.",
           GH_ParamAccess.item, 10.0);
+      pManager.AddIntervalParameter(
+          "SlopeBounds", "B",
+          "Slope range for color mapping (degrees). Slopes outside this range are clamped to min/max colors. " +
+              "Use this to focus on specific slope ranges.",
+          GH_ParamAccess.item, new Interval(0, 90));
 
       pManager[1].Optional = true;
+      pManager[2].Optional = true;
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager pManager) {
       pManager.AddMeshParameter(
           "AnalysisMesh", "M",
-          "Color-coded mesh showing slope analysis (0° = flat, 90° = vertical).",
+          "Color-coded mesh showing slope analysis. Colors mapped to SlopeBounds range.",
           GH_ParamAccess.item);
       pManager.AddPointParameter("SamplePoints", "P", "Grid points where slope was sampled.",
                                  GH_ParamAccess.list);
@@ -192,16 +198,23 @@ namespace BeingAliveTerrain {
       pManager.AddVectorParameter("SlopeVectors", "V",
                                   "Direction vectors showing downhill direction at each point.",
                                   GH_ParamAccess.list);
+      pManager.AddBooleanParameter("InBounds", "IB",
+                                   "True if slope is within SlopeBounds, False if outside. " +
+                                       "Use this to filter/select points by slope range.",
+                                   GH_ParamAccess.list);
     }
 
     protected override void SolveInstance(IGH_DataAccess DA) {
       Mesh terrain = null;
       double gridSize = 10.0;
+      Interval slopeBounds = new Interval(0, 90);
 
       // Get input data
       if (!DA.GetData("Mesh", ref terrain))
         return;
       if (!DA.GetData("GridSize", ref gridSize))
+        return;
+      if (!DA.GetData("SlopeBounds", ref slopeBounds))
         return;
 
       // Validate inputs
@@ -215,6 +228,19 @@ namespace BeingAliveTerrain {
         gridSize = Math.Max(0.1, gridSize);
       }
 
+      // Validate slope bounds
+      if (!slopeBounds.IsValid || slopeBounds.T0 < 0 || slopeBounds.T1 > 90) {
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                          "SlopeBounds should be a valid interval between 0 and 90 degrees");
+        slopeBounds = new Interval(Math.Max(0, slopeBounds.T0), Math.Min(90, slopeBounds.T1));
+      }
+
+      if (slopeBounds.T0 >= slopeBounds.T1) {
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Warning,
+                          "SlopeBounds minimum must be less than maximum");
+        slopeBounds = new Interval(0, 90);
+      }
+
       // Get terrain bounding box
       BoundingBox bbox = terrain.GetBoundingBox(false);
 
@@ -225,10 +251,19 @@ namespace BeingAliveTerrain {
       GradientMap gradientMap =
           TerrainAnalysisUtils.PrecomputeGradientMap(terrain, bbox, gridSize, sampleDistance);
 
+      // Show warning if mesh normal fallback was used (extreme edge cases)
+      if (gradientMap.MeshNormalFallbackCount > 0) {
+        AddRuntimeMessage(
+            GH_RuntimeMessageLevel.Warning,
+            $"Mesh normal fallback used for {gradientMap.MeshNormalFallbackCount} points at mesh edges. " +
+                "Consider using a smaller GridSize for better edge accuracy.");
+      }
+
       // Create lists for output data
       List<Point3d> samplePoints = new List<Point3d>();
       List<double> slopeValues = new List<double>();
       List<Vector3d> slopeVectors = new List<Vector3d>();
+      List<bool> inBounds = new List<bool>();
 
       // Collect data from gradient map
       for (int i = 0; i < gradientMap.XCount; i++) {
@@ -255,27 +290,34 @@ namespace BeingAliveTerrain {
             downhillDir *= gridSize;
           }
 
+          // Check if slope is within bounds
+          bool withinBounds =
+              !double.IsNaN(slope) && slope >= slopeBounds.T0 && slope <= slopeBounds.T1;
+
           samplePoints.Add(point);
           slopeValues.Add(slope);
           slopeVectors.Add(downhillDir);
+          inBounds.Add(withinBounds);
         }
       }
 
       // Create analysis mesh with color coding
-      Mesh analysisMesh = CreateSlopeAnalysisMesh(gradientMap, bbox, gridSize, selectedColorMap);
+      Mesh analysisMesh =
+          CreateSlopeAnalysisMesh(gradientMap, bbox, gridSize, slopeBounds, selectedColorMap);
 
       // Output results
       DA.SetData("AnalysisMesh", analysisMesh);
       DA.SetDataList("SamplePoints", samplePoints);
       DA.SetDataList("SlopeValues", slopeValues);
       DA.SetDataList("SlopeVectors", slopeVectors);
+      DA.SetDataList("InBounds", inBounds);
     }
 
     /// <summary>
     /// Create a color-coded mesh showing slope analysis
     /// </summary>
     private Mesh CreateSlopeAnalysisMesh(GradientMap gradientMap, BoundingBox bbox, double gridSize,
-                                         string colorMapName) {
+                                         Interval slopeBounds, string colorMapName) {
       Mesh analysisMesh = new Mesh();
 
       // Get the specified color map
@@ -284,30 +326,15 @@ namespace BeingAliveTerrain {
       int xCount = gradientMap.XCount;
       int yCount = gradientMap.YCount;
 
-      // Find min and max slope for color mapping
-      double minSlope = 0.0;   // Always start at 0 degrees
-      double maxSlope = 90.0;  // Maximum possible slope
-
-      // Find actual max slope in the data for better color distribution
-      double actualMaxSlope = 0.0;
-      for (int i = 0; i < xCount; i++) {
-        for (int j = 0; j < yCount; j++) {
-          if (!double.IsNaN(gradientMap.Slopes[i, j])) {
-            actualMaxSlope = Math.Max(actualMaxSlope, gradientMap.Slopes[i, j]);
-          }
-        }
-      }
-
-      // Use actual max slope if it's reasonable, otherwise use 90 degrees
-      if (actualMaxSlope > 0 && actualMaxSlope < 90) {
-        maxSlope = actualMaxSlope;
-      }
+      // Use the provided slope bounds for color mapping
+      double minSlope = slopeBounds.T0;
+      double maxSlope = slopeBounds.T1;
 
       // Create a mapping from grid indices to vertex indices (for handling NaN values)
       int[,] vertexIndexMap = new int[xCount, yCount];
       for (int i = 0; i < xCount; i++) {
         for (int j = 0; j < yCount; j++) {
-          vertexIndexMap[i, j] = -1; // -1 means invalid/not added
+          vertexIndexMap[i, j] = -1;  // -1 means invalid/not added
         }
       }
 
@@ -323,7 +350,7 @@ namespace BeingAliveTerrain {
           if (!double.IsNaN(z)) {
             // Store the vertex index for this grid location
             vertexIndexMap[i, j] = analysisMesh.Vertices.Count;
-            
+
             analysisMesh.Vertices.Add(x, y, z);
 
             // Map slope value to color
@@ -331,7 +358,9 @@ namespace BeingAliveTerrain {
             if (double.IsNaN(slope)) {
               color = System.Drawing.Color.White;  // White for invalid slope
             } else {
-              color = ColorMapHelper.MapValueToColor(slope, minSlope, maxSlope, colorMap);
+              // Clamp slope to bounds - values outside range get clamped to min/max colors
+              double clampedSlope = Math.Max(minSlope, Math.Min(maxSlope, slope));
+              color = ColorMapHelper.MapValueToColor(clampedSlope, minSlope, maxSlope, colorMap);
             }
 
             analysisMesh.VertexColors.Add(color);
@@ -360,7 +389,7 @@ namespace BeingAliveTerrain {
       // Compact the mesh to remove any unused vertices
       analysisMesh.Compact();
       analysisMesh.Normals.ComputeNormals();
-      
+
       return analysisMesh;
     }
 

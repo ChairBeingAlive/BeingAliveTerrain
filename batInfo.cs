@@ -28,4 +28,14 @@ namespace BeingAliveTerrain {
     // this is currently the variable used by McNeel for plugin system
     public override string Version => AssemblyVersion;
   }
+
+  // update plugin icons and category in the tab
+  public class BAT_CategoryIcon : GH_AssemblyPriority {
+    public override GH_LoadingInstruction PriorityLoad() {
+      Grasshopper.Instances.ComponentServer.AddCategoryIcon("BAT", Properties.Resources.appIcon);
+      Grasshopper.Instances.ComponentServer.AddCategorySymbolName("BAT", 'B');
+      return GH_LoadingInstruction.Proceed;
+    }
+  }
+
 }
