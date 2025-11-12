@@ -23,7 +23,7 @@ namespace BeingAliveTerrain {
     public override string AuthorContact => "https://github.com/ChairBeingAlive/BeingAliveTerrain";
 
     // public override string AssemblyVersion => GetType().Assembly.GetName().Version.ToString();
-    public override string AssemblyVersion => "0.1.9";
+    public override string AssemblyVersion => "0.2.0";
 
     // this is currently the variable used by McNeel for plugin system
     public override string Version => AssemblyVersion;
