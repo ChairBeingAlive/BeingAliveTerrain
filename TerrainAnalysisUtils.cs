@@ -71,9 +71,28 @@ namespace BeingAliveTerrain {
     /// <param name="mesh">Terrain mesh</param>
     /// <param name="point">Point to calculate gradient at</param>
     /// <param name="sampleDistance">Distance to sample in each direction for gradient
-    /// calculation</param> <returns>Gradient vector (dz/dx, dz/dy, 0), or zero vector if
+    /// calculation</param>
+    /// <returns>Gradient vector (dz/dx, dz/dy, 0), or zero vector if
     /// calculation fails</returns>
     public static Vector3d CalculateGradient(Mesh mesh, Point3d point, double sampleDistance) {
+      return CalculateGradientWithStatus(mesh, point, sampleDistance, out _);
+    }
+
+    /// <summary>
+    /// Calculate the terrain gradient at a point with adaptive method selection
+    /// Uses mesh normals near edges and finite differences in the interior
+    /// </summary>
+    /// <param name="mesh">Terrain mesh</param>
+    /// <param name="point">Point to calculate gradient at</param>
+    /// <param name="sampleDistance">Distance to sample in each direction</param>
+    /// <param name="calculationFailed">Output: true if gradient calculation completely failed,
+    /// false if successful or genuinely flat</param> <returns>Gradient vector (dz/dx, dz/dy,
+    /// 0)</returns>
+    private static Vector3d CalculateGradientWithStatus(Mesh mesh, Point3d point,
+                                                        double sampleDistance,
+                                                        out bool calculationFailed) {
+      calculationFailed = false;
+
       // Sample heights in 4 cardinal directions
       double heightCenter = GetMeshHeightAtPoint(mesh, point);
       double heightEast = GetMeshHeightAtPoint(mesh, point + new Vector3d(sampleDistance, 0, 0));
@@ -81,38 +100,91 @@ namespace BeingAliveTerrain {
       double heightNorth = GetMeshHeightAtPoint(mesh, point + new Vector3d(0, sampleDistance, 0));
       double heightSouth = GetMeshHeightAtPoint(mesh, point + new Vector3d(0, -sampleDistance, 0));
 
+      // Count how many samples are valid
+      int validSamples = 0;
+      if (!double.IsNaN(heightCenter))
+        validSamples++;
+      if (!double.IsNaN(heightEast))
+        validSamples++;
+      if (!double.IsNaN(heightWest))
+        validSamples++;
+      if (!double.IsNaN(heightNorth))
+        validSamples++;
+      if (!double.IsNaN(heightSouth))
+        validSamples++;
+
+      // If we have very few valid samples, this point is close to mesh edge
+      // Use mesh normal method as primary approach
+      if (validSamples <= 2) {
+        Vector3d normalBasedGradient = GetGradientFromMeshNormal(mesh, point);
+        if (normalBasedGradient != Vector3d.Zero) {
+          return normalBasedGradient;
+        }
+        // If mesh normal method also fails, mark as failed
+        calculationFailed = true;
+        return Vector3d.Zero;
+      }
+
       // Calculate gradient components using adaptive difference method
       double dzdx = 0;
       double dzdy = 0;
+      bool xGradientValid = false;
+      bool yGradientValid = false;
 
       // X-direction gradient (East-West)
       if (!double.IsNaN(heightEast) && !double.IsNaN(heightWest)) {
         // Central difference (best accuracy)
         dzdx = (heightEast - heightWest) / (2.0 * sampleDistance);
+        xGradientValid = true;
       } else if (!double.IsNaN(heightEast) && !double.IsNaN(heightCenter)) {
         // Forward difference (at west edge)
         dzdx = (heightEast - heightCenter) / sampleDistance;
+        xGradientValid = true;
       } else if (!double.IsNaN(heightWest) && !double.IsNaN(heightCenter)) {
         // Backward difference (at east edge)
         dzdx = (heightCenter - heightWest) / sampleDistance;
-      } else {
-        // No valid X gradient data
-        dzdx = 0;
+        xGradientValid = true;
       }
 
       // Y-direction gradient (North-South)
       if (!double.IsNaN(heightNorth) && !double.IsNaN(heightSouth)) {
         // Central difference (best accuracy)
         dzdy = (heightNorth - heightSouth) / (2.0 * sampleDistance);
+        yGradientValid = true;
       } else if (!double.IsNaN(heightNorth) && !double.IsNaN(heightCenter)) {
         // Forward difference (at south edge)
         dzdy = (heightNorth - heightCenter) / sampleDistance;
+        yGradientValid = true;
       } else if (!double.IsNaN(heightSouth) && !double.IsNaN(heightCenter)) {
         // Backward difference (at north edge)
         dzdy = (heightCenter - heightSouth) / sampleDistance;
-      } else {
-        // No valid Y gradient data
-        dzdy = 0;
+        yGradientValid = true;
+      }
+
+      // If we have partial gradient info, combine it with mesh normal
+      if (!xGradientValid || !yGradientValid) {
+        Vector3d normalBasedGradient = GetGradientFromMeshNormal(mesh, point);
+
+        if (normalBasedGradient != Vector3d.Zero) {
+          // Use finite difference for the valid direction, mesh normal for the invalid direction
+          if (!xGradientValid && yGradientValid) {
+            dzdx = normalBasedGradient.X;
+            xGradientValid = true;
+          }
+          if (!yGradientValid && xGradientValid) {
+            dzdy = normalBasedGradient.Y;
+            yGradientValid = true;
+          }
+          // If both are invalid, use the mesh normal entirely
+          if (!xGradientValid && !yGradientValid) {
+            return normalBasedGradient;
+          }
+        }
+      }
+
+      // If both gradients failed to calculate, mark as failed
+      if (!xGradientValid && !yGradientValid) {
+        calculationFailed = true;
       }
 
       return new Vector3d(dzdx, dzdy, 0);
@@ -204,7 +276,9 @@ namespace BeingAliveTerrain {
       double[,] slopes = new double[xCount, yCount];
       double[,] heights = new double[xCount, yCount];
 
+      int meshNormalUsedCount = 0;
       int meshNormalFallbackCount = 0;
+      int flatTerrainCount = 0;
 
       for (int i = 0; i < xCount; i++) {
         for (int j = 0; j < yCount; j++) {
@@ -224,33 +298,68 @@ namespace BeingAliveTerrain {
           // Update point with actual height
           point = new Point3d(x, y, heights[i, j]);
 
-          gradients[i, j] = CalculateGradient(mesh, point, sampleDistance);
+          // Calculate gradient with status information
+          bool calculationFailed;
+          Vector3d gradient =
+              CalculateGradientWithStatus(mesh, point, sampleDistance, out calculationFailed);
 
-          // If gradient calculation completely failed (extreme edge case), use mesh normal fallback
-          if (gradients[i, j] == Vector3d.Zero) {
-            Vector3d normalBasedGradient = GetGradientFromMeshNormal(mesh, point);
-            if (normalBasedGradient != Vector3d.Zero) {
-              gradients[i, j] = normalBasedGradient;
-              meshNormalFallbackCount++;
+          // Track if mesh normal was used (either as primary or fallback)
+          bool usedMeshNormal = false;
+
+          // Check if gradient is from mesh normal by sampling again with small distance
+          if (gradient != Vector3d.Zero && !calculationFailed) {
+            // Count valid samples to determine if mesh normal was likely used
+            double testDistance = sampleDistance;
+            int validCount = 0;
+            if (!double.IsNaN(GetMeshHeightAtPoint(mesh, point)))
+              validCount++;
+            if (!double.IsNaN(GetMeshHeightAtPoint(mesh, point + new Vector3d(testDistance, 0, 0))))
+              validCount++;
+            if (!double.IsNaN(
+                    GetMeshHeightAtPoint(mesh, point + new Vector3d(-testDistance, 0, 0))))
+              validCount++;
+            if (!double.IsNaN(GetMeshHeightAtPoint(mesh, point + new Vector3d(0, testDistance, 0))))
+              validCount++;
+            if (!double.IsNaN(
+                    GetMeshHeightAtPoint(mesh, point + new Vector3d(0, -testDistance, 0))))
+              validCount++;
+
+            if (validCount <= 2) {
+              usedMeshNormal = true;
+              meshNormalUsedCount++;
             }
+          }
+
+          gradients[i, j] = gradient;
+
+          // If gradient calculation completely failed, it's a fallback case
+          if (calculationFailed) {
+            meshNormalFallbackCount++;
+          } else if (gradient == Vector3d.Zero) {
+            // Gradient is zero but calculation succeeded - genuinely flat terrain
+            flatTerrainCount++;
           }
 
           slopes[i, j] = CalculateSlopeFromGradient(gradients[i, j]);
         }
       }
 
-      var gradientMap = new GradientMap {
-        BoundingBox = bbox,    GridSize = gridSize,
-        XCount = xCount,       YCount = yCount,
-        Gradients = gradients, Slopes = slopes,
-        Heights = heights,     MeshNormalFallbackCount = meshNormalFallbackCount
-      };
+      var gradientMap = new GradientMap { BoundingBox = bbox,
+                                          GridSize = gridSize,
+                                          XCount = xCount,
+                                          YCount = yCount,
+                                          Gradients = gradients,
+                                          Slopes = slopes,
+                                          Heights = heights,
+                                          MeshNormalUsedCount = meshNormalUsedCount,
+                                          MeshNormalFallbackCount = meshNormalFallbackCount,
+                                          FlatTerrainCount = flatTerrainCount };
 
       return gradientMap;
     }
 
     /// <summary>
-    /// Get gradient estimate from mesh normal at a point (fallback method for edge cases)
+    /// Get gradient estimate from mesh normal at a point (primary method for edge cases)
     /// </summary>
     /// <param name="mesh">Terrain mesh</param>
     /// <param name="point">Point on mesh surface</param>
@@ -292,7 +401,7 @@ namespace BeingAliveTerrain {
     /// <returns>Slope angle in degrees</returns>
     private static double CalculateSlopeFromGradient(Vector3d gradient) {
       if (gradient == Vector3d.Zero) {
-        return double.NaN;
+        return 0.0;  // Flat terrain has 0° slope
       }
 
       // Slope = arctan(sqrt(dz/dx² + dz/dy²))
@@ -315,7 +424,22 @@ namespace BeingAliveTerrain {
     public Vector3d[,] Gradients { get; set; }
     public double[,] Slopes { get; set; }
     public double[,] Heights { get; set; }
+
+    /// <summary>
+    /// Number of points where mesh normal was used as primary method (near edges with few valid
+    /// samples)
+    /// </summary>
+    public int MeshNormalUsedCount { get; set; }
+
+    /// <summary>
+    /// Number of points where mesh normal was used as fallback after gradient calculation failed
+    /// </summary>
     public int MeshNormalFallbackCount { get; set; }
+
+    /// <summary>
+    /// Number of points with genuinely flat terrain (zero gradient)
+    /// </summary>
+    public int FlatTerrainCount { get; set; }
 
     /// <summary>
     /// Get gradient at a specific point using bilinear interpolation

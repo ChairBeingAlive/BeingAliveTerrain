@@ -114,7 +114,8 @@ namespace BeingAliveTerrain {
       // Add start point
       flowPath.Add(currentPoint);
 
-      // Use half the step size for gradient sampling (for more accurate gradient calculation)
+      // Use half the step size for gradient sampling (for more accurate gradient
+      // calculation)
       double sampleDistance = stepSize * 0.5;
 
       // Run simulation
@@ -143,8 +144,8 @@ namespace BeingAliveTerrain {
         Point3d nextPoint = new Point3d(nextPointXY.X, nextPointXY.Y, nextHeight);
 
         // Optional: Check if we're actually going downhill (numerical stability)
-        // Stop if height increased (shouldn't happen with gradient descent, but terrain sampling
-        // can be noisy)
+        // Stop if height increased (shouldn't happen with gradient descent, but
+        // terrain sampling can be noisy)
         if (nextPoint.Z > currentPoint.Z + 0.001) {
           break;
         }
@@ -244,6 +245,9 @@ namespace BeingAliveTerrain {
       // Get terrain bounding box
       BoundingBox bbox = terrain.GetBoundingBox(false);
 
+      // rebuild normals for accurate gradient calculations
+      terrain.RebuildNormals();
+
       // Use half grid size for gradient sampling
       double sampleDistance = gridSize * 0.5;
 
@@ -251,12 +255,27 @@ namespace BeingAliveTerrain {
       GradientMap gradientMap =
           TerrainAnalysisUtils.PrecomputeGradientMap(terrain, bbox, gridSize, sampleDistance);
 
-      // Show warning if mesh normal fallback was used (extreme edge cases)
-      if (gradientMap.MeshNormalFallbackCount > 0) {
-        AddRuntimeMessage(
-            GH_RuntimeMessageLevel.Warning,
-            $"Mesh normal fallback used for {gradientMap.MeshNormalFallbackCount} points at mesh edges. " +
-                "Consider using a smaller GridSize for better edge accuracy.");
+      // Show diagnostic information about gradient calculation methods used
+      if (gradientMap.MeshNormalUsedCount > 0 || gradientMap.MeshNormalFallbackCount > 0) {
+        string message = $"Gradient calculation statistics: ";
+        
+        if (gradientMap.MeshNormalUsedCount > 0) {
+          message += $"{gradientMap.MeshNormalUsedCount} edge points used mesh normals (primary method), ";
+        }
+        
+        if (gradientMap.MeshNormalFallbackCount > 0) {
+          message += $"{gradientMap.MeshNormalFallbackCount} points used fallback method, ";
+        }
+        
+        message += $"{gradientMap.FlatTerrainCount} flat terrain points. ";
+        
+        // Only show as warning if there are actual fallbacks (calculation failures)
+        if (gradientMap.MeshNormalFallbackCount > 0) {
+          AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, message + 
+              "Consider using a larger GridSize or expanding the mesh boundary if edge accuracy is critical.");
+        } else {
+          AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, message);
+        }
       }
 
       // Create lists for output data
@@ -330,7 +349,8 @@ namespace BeingAliveTerrain {
       double minSlope = slopeBounds.T0;
       double maxSlope = slopeBounds.T1;
 
-      // Create a mapping from grid indices to vertex indices (for handling NaN values)
+      // Create a mapping from grid indices to vertex indices (for handling NaN
+      // values)
       int[,] vertexIndexMap = new int[xCount, yCount];
       for (int i = 0; i < xCount; i++) {
         for (int j = 0; j < yCount; j++) {
@@ -358,7 +378,8 @@ namespace BeingAliveTerrain {
             if (double.IsNaN(slope)) {
               color = System.Drawing.Color.White;  // White for invalid slope
             } else {
-              // Clamp slope to bounds - values outside range get clamped to min/max colors
+              // Clamp slope to bounds - values outside range get clamped to
+              // min/max colors
               double clampedSlope = Math.Max(minSlope, Math.Min(maxSlope, slope));
               color = ColorMapHelper.MapValueToColor(clampedSlope, minSlope, maxSlope, colorMap);
             }
@@ -368,7 +389,8 @@ namespace BeingAliveTerrain {
         }
       }
 
-      // Create triangular mesh faces (only for quads where all 4 vertices are valid)
+      // Create triangular mesh faces (only for quads where all 4 vertices are
+      // valid)
       for (int i = 0; i < xCount - 1; i++) {
         for (int j = 0; j < yCount - 1; j++) {
           // Get vertex indices for the quad
@@ -393,7 +415,8 @@ namespace BeingAliveTerrain {
       return analysisMesh;
     }
 
-    // Add right-click menu for color map selection (flat structure for cross-platform)
+    // Add right-click menu for color map selection (flat structure for
+    // cross-platform)
     public override void AppendAdditionalMenuItems(ToolStripDropDown menu) {
       base.AppendAdditionalMenuItems(menu);
 
@@ -432,4 +455,4 @@ namespace BeingAliveTerrain {
       return base.Read(reader);
     }
   }
-}
+}  // namespace BeingAliveTerrain
