@@ -303,9 +303,6 @@ namespace BeingAliveTerrain {
           Vector3d gradient =
               CalculateGradientWithStatus(mesh, point, sampleDistance, out calculationFailed);
 
-          // Track if mesh normal was used (either as primary or fallback)
-          bool usedMeshNormal = false;
-
           // Check if gradient is from mesh normal by sampling again with small distance
           if (gradient != Vector3d.Zero && !calculationFailed) {
             // Count valid samples to determine if mesh normal was likely used
@@ -325,7 +322,6 @@ namespace BeingAliveTerrain {
               validCount++;
 
             if (validCount <= 2) {
-              usedMeshNormal = true;
               meshNormalUsedCount++;
             }
           }
