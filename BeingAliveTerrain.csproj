@@ -20,7 +20,6 @@
     <Title>BeingAliveTerrain</Title>
     <Company>ETH ZUrich</Company>
     <Description>Description of BeingAliveTerrain</Description>
-    <!-- <TargetFramework>net8.0</TargetFramework> -->
   </PropertyGroup>
   
   <ItemGroup>
