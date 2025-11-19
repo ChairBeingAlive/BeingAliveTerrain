@@ -175,11 +175,11 @@ namespace BeingAliveTerrain {
       pManager.AddMeshParameter("Mesh", "M", "Terrain mesh to analyze.", GH_ParamAccess.item);
       pManager.AddNumberParameter(
           "GridSize", "G",
-          "Grid size for sampling terrain. Smaller values give more detail but slower computation.",
+          "Grid size for sampling terrain. Smaller values give more detail but  slower computation.",
           GH_ParamAccess.item, 10.0);
       pManager.AddIntervalParameter(
           "SlopeBounds", "B",
-          "Slope range for color mapping (degrees). Slopes outside this range are clamped to min/max colors. " +
+          "Slope range for color mapping (degrees). Slopes outside this range  are clamped to min/max colors. " +
               "Use this to focus on specific slope ranges.",
           GH_ParamAccess.item, new Interval(0, 90));
 
@@ -190,7 +190,7 @@ namespace BeingAliveTerrain {
     protected override void RegisterOutputParams(GH_OutputParamManager pManager) {
       pManager.AddMeshParameter(
           "AnalysisMesh", "M",
-          "Color-coded mesh showing slope analysis. Colors mapped to SlopeBounds range.",
+          "Color-coded mesh showing slope analysis. Colors  mapped to SlopeBounds range.",
           GH_ParamAccess.item);
       pManager.AddPointParameter("SamplePoints", "P", "Grid points where slope was sampled.",
                                  GH_ParamAccess.list);
@@ -261,21 +261,22 @@ namespace BeingAliveTerrain {
 
         if (gradientMap.MeshNormalUsedCount > 0) {
           message +=
-              $"{gradientMap.MeshNormalUsedCount} edge points used mesh normals (primary method), ";
+              $"{gradientMap.MeshNormalUsedCount} edge points used mesh normals  (primary method), ";
         }
 
         if (gradientMap.MeshNormalFallbackCount > 0) {
-          message += $"{gradientMap.MeshNormalFallbackCount} points used fallback method, ";
+          message += $"{gradientMap.MeshNormalFallbackCount} points used fallback  method, ";
         }
 
         message += $"{gradientMap.FlatTerrainCount} flat terrain points. ";
 
-        // Only show as warning if there are actual fallbacks (calculation failures)
+        // Only show as warning if there are actual fallbacks (calculation
+        // failures)
         if (gradientMap.MeshNormalFallbackCount > 0) {
           AddRuntimeMessage(
               GH_RuntimeMessageLevel.Warning,
               message +
-                  "Consider using a larger GridSize or expanding the mesh boundary if edge accuracy is critical.");
+                  "Consider using a larger GridSize or expanding the mesh  boundary if edge accuracy is critical.");
         } else {
           AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, message);
         }
@@ -480,11 +481,18 @@ namespace BeingAliveTerrain {
           GH_ParamAccess.item);
       pManager.AddNumberParameter(
           "MinArea", "A",
-          "Minimum watershed area. Smaller watersheds will be merged into neighbors. Set to 0 to keep all.",
+          "Minimum watershed area. Smaller watersheds will be merged into  neighbors. Set to 0 to keep all.",
           GH_ParamAccess.item, 0.0);
+      pManager.AddNumberParameter(
+          "EdgeTolerance", "T",
+          "Distance from mesh boundary to detect edge watersheds (in grid cells). " +
+              "Watersheds with sinks within this distance are merged with interior neighbors. " +
+              "Default is 1.5 grid cells.",
+          GH_ParamAccess.item, 1.5);
 
       pManager[1].Optional = true;
       pManager[2].Optional = true;
+      pManager[3].Optional = true;
     }
 
     protected override void RegisterOutputParams(GH_OutputParamManager pManager) {
@@ -503,15 +511,23 @@ namespace BeingAliveTerrain {
       Mesh terrain = null;
       double resolution = 0;
       double minArea = 0.0;
+      double edgeTolerance = 1.5;
 
       if (!DA.GetData("Mesh", ref terrain))
         return;
       DA.GetData("Resolution", ref resolution);
       DA.GetData("MinArea", ref minArea);
+      DA.GetData("EdgeTolerance", ref edgeTolerance);
 
       if (terrain == null) {
         AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Input terrain mesh cannot be null");
         return;
+      }
+
+      // Validate edge tolerance
+      if (edgeTolerance < 0) {
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, "EdgeTolerance must be non-negative");
+        edgeTolerance = Math.Max(0, edgeTolerance);
       }
 
       // Get bounding box
@@ -533,12 +549,12 @@ namespace BeingAliveTerrain {
           TerrainAnalysisUtils.PrecomputeGradientMap(terrain, bbox, resolution, sampleDistance);
 
       // Perform watershed segmentation using gradient-based flow
-      var segmentation = SegmentWatersheds(gradientMap, bbox, resolution, minArea);
+      var segmentation = SegmentWatersheds(gradientMap, bbox, resolution, minArea, edgeTolerance);
 
       if (segmentation.BasinCount == 0) {
         AddRuntimeMessage(
             GH_RuntimeMessageLevel.Warning,
-            "No watersheds found. Terrain may be flat or have no clear drainage patterns.");
+            "No watersheds found. Terrain may be flat or have no  clear drainage patterns.");
         return;
       }
 
@@ -555,14 +571,16 @@ namespace BeingAliveTerrain {
         // Extract original mesh faces for this basin
         var basinMesh = ExtractBasinFromOriginalMesh(terrain, vertexBasinIds, basinId);
         if (basinMesh != null && basinMesh.Vertices.Count > 0) {
-          // Clean up isolated fragments - keep only the largest connected component
+          // Clean up isolated fragments - keep only the largest connected
+          // component
           basinMesh = RemoveIsolatedFragments(basinMesh);
-          
+
           if (basinMesh != null && basinMesh.Vertices.Count > 0) {
             watershedMeshes.Add(basinMesh);
 
             // Calculate sink point directly from the cleaned watershed mesh
-            // This ensures the sink is within the actual mesh after fragment removal
+            // This ensures the sink is within the actual mesh after fragment
+            // removal
             Point3d sinkPoint = FindLowestPointInMesh(basinMesh);
             sinks.Add(sinkPoint);
           }
@@ -618,7 +636,8 @@ namespace BeingAliveTerrain {
     /// Segment terrain into watersheds using gradient-based flow simulation
     /// </summary>
     private WatershedSegmentation SegmentWatersheds(GradientMap gradientMap, BoundingBox bbox,
-                                                    double gridSize, double minArea) {
+                                                    double gridSize, double minArea,
+                                                    double edgeTolerance) {
       int xCount = gradientMap.XCount;
       int yCount = gradientMap.YCount;
 
@@ -699,14 +718,11 @@ namespace BeingAliveTerrain {
         MergeSmallBasins(basinIds, gradientMap, gridSize, minArea, ref currentBasinId);
       }
 
-      // Step 4: Detect and merge edge basins (watersheds with sinks on boundaries)
+      // Step 4: Merge edge basins (watersheds with sinks on boundaries)
       // These represent incomplete catchments where water flows off the mesh
-      List<int> edgeBasinIds =
-          DetectEdgeBasins(basinIds, sinkToBasinId, gradientMap, xCount, yCount, gridSize * 1.5);
-
-      if (edgeBasinIds.Count > 0) {
-        MergeEdgeBasins(basinIds, edgeBasinIds, gradientMap, xCount, yCount, ref currentBasinId);
-      }
+      // Use cluster-based merging for efficiency and stability
+      MergeEdgeBasinsClustered(basinIds, gradientMap, xCount, yCount, gridSize, edgeTolerance,
+                               ref currentBasinId);
 
       return new WatershedSegmentation { BasinIds = basinIds, BasinCount = currentBasinId,
                                          SinkToBasinId = sinkToBasinId, XCount = xCount,
@@ -831,14 +847,60 @@ namespace BeingAliveTerrain {
     }
 
     /// <summary>
-    /// Detect basins whose sinks are on or near the mesh boundary
-    /// Recalculates sink locations from current basin assignments (after merging)
+    /// Merge edge basins using cluster-based approach (efficient single-pass)
+    /// Edge basins are watersheds with sinks near boundaries - incomplete catchments
+    /// where water flows off the mesh
     /// </summary>
-    private List<int> DetectEdgeBasins(int[,] basinIds,
-                                       Dictionary<(int, int), int> oldSinkToBasinId,
-                                       GradientMap gradientMap, int xCount, int yCount,
-                                       double edgeTolerance) {
-      List<int> edgeBasinIds = new List<int>();
+    private void MergeEdgeBasinsClustered(int[,] basinIds, GradientMap gradientMap, int xCount,
+                                          int yCount, double gridSize, double edgeTolerance,
+                                          ref int basinCount) {
+      // Step 1: Detect all edge basins (sinks near boundaries)
+      HashSet<int> edgeBasinIds =
+          DetectEdgeBasins(basinIds, gradientMap, xCount, yCount, edgeTolerance);
+
+      if (edgeBasinIds.Count == 0) {
+        return;  // No edge basins to merge
+      }
+
+      // Step 2: Build merge graph - for each edge basin, find best interior neighbor
+      Dictionary<int, int> edgeBasinToInteriorNeighbor = new Dictionary<int, int>();
+
+      foreach (int edgeBasinId in edgeBasinIds) {
+        int bestNeighbor = FindBestInteriorNeighbor(basinIds, edgeBasinId, edgeBasinIds,
+                                                    gradientMap, xCount, yCount);
+
+        if (bestNeighbor >= 0) {
+          edgeBasinToInteriorNeighbor[edgeBasinId] = bestNeighbor;
+        }
+      }
+
+      // Step 3: Build merge clusters using union-find
+      // Multiple edge basins may merge into same interior basin
+      // Or edge basins may form chains (edge1→edge2→interior)
+      Dictionary<int, int> basinToClusterRoot =
+          BuildMergeClusters(edgeBasinToInteriorNeighbor, edgeBasinIds);
+
+      // Step 4: Apply merging - remap all basin IDs in single pass
+      for (int i = 0; i < xCount; i++) {
+        for (int j = 0; j < yCount; j++) {
+          int originalBasinId = basinIds[i, j];
+          if (originalBasinId >= 0 && basinToClusterRoot.ContainsKey(originalBasinId)) {
+            basinIds[i, j] = basinToClusterRoot[originalBasinId];
+          }
+        }
+      }
+
+      // Step 5: Renumber basins to be sequential (remove gaps from merged basins)
+      RenumberBasins(basinIds, xCount, yCount, ref basinCount);
+    }
+
+    /// <summary>
+    /// Detect basins whose sinks are on or near the mesh boundary
+    /// Returns set of edge basin IDs
+    /// </summary>
+    private HashSet<int> DetectEdgeBasins(int[,] basinIds, GradientMap gradientMap, int xCount,
+                                          int yCount, double edgeTolerance) {
+      HashSet<int> edgeBasinIds = new HashSet<int>();
 
       // Get all unique basin IDs currently in the grid
       HashSet<int> activeBasinIds = new HashSet<int>();
@@ -850,7 +912,7 @@ namespace BeingAliveTerrain {
         }
       }
 
-      // For each active basin, find its current sink location
+      // For each basin, find its current sink location
       foreach (int basinId in activeBasinIds) {
         double minHeight = double.MaxValue;
         int sinkI = -1, sinkJ = -1;
@@ -871,10 +933,16 @@ namespace BeingAliveTerrain {
 
         // Check if this sink is near any boundary
         if (sinkI >= 0 && sinkJ >= 0) {
-          bool isNearEdge =
-              (sinkI <= 1 || sinkI >= xCount - 2 || sinkJ <= 1 || sinkJ >= yCount - 2);
+          // Calculate distance to nearest boundary (in grid cells)
+          int distToLeft = sinkI;
+          int distToRight = (xCount - 1) - sinkI;
+          int distToBottom = sinkJ;
+          int distToTop = (yCount - 1) - sinkJ;
 
-          if (isNearEdge) {
+          int minDistToBoundary =
+              Math.Min(Math.Min(distToLeft, distToRight), Math.Min(distToBottom, distToTop));
+
+          if (minDistToBoundary <= edgeTolerance) {
             edgeBasinIds.Add(basinId);
           }
         }
@@ -884,29 +952,193 @@ namespace BeingAliveTerrain {
     }
 
     /// <summary>
-    /// Merge edge basins into their best neighboring interior basin
+    /// Find the best interior (non-edge) neighbor for an edge basin
+    /// Uses proximity to sink location as primary criterion
     /// </summary>
-    private void MergeEdgeBasins(int[,] basinIds, List<int> edgeBasinIds, GradientMap gradientMap,
-                                 int xCount, int yCount, ref int basinCount) {
-      // Process each edge basin
-      foreach (int edgeBasinId in edgeBasinIds) {
-        // Find best neighbor (prefer interior basins)
-        int bestNeighbor =
-            FindBestNeighborBasin(basinIds, edgeBasinId, gradientMap, xCount, yCount);
+    private int FindBestInteriorNeighbor(int[,] basinIds, int edgeBasinId,
+                                         HashSet<int> edgeBasinIds, GradientMap gradientMap,
+                                         int xCount, int yCount) {
+      // Find the sink location for this edge basin
+      double minHeight = double.MaxValue;
+      int sinkI = -1, sinkJ = -1;
 
-        if (bestNeighbor >= 0) {
-          // Merge edge basin into neighbor
-          for (int i = 0; i < xCount; i++) {
-            for (int j = 0; j < yCount; j++) {
-              if (basinIds[i, j] == edgeBasinId) {
-                basinIds[i, j] = bestNeighbor;
-              }
+      for (int i = 0; i < xCount; i++) {
+        for (int j = 0; j < yCount; j++) {
+          if (basinIds[i, j] == edgeBasinId) {
+            double height = gradientMap.Heights[i, j];
+            if (!double.IsNaN(height) && height < minHeight) {
+              minHeight = height;
+              sinkI = i;
+              sinkJ = j;
             }
           }
         }
       }
 
-      // Renumber basins to be sequential (remove gaps from merged basins)
+      if (sinkI < 0 || sinkJ < 0) {
+        return -1;  // No valid sink found
+      }
+
+      // Search for neighboring basins in expanding radius around sink
+      int searchRadius = 1;
+      int maxSearchRadius = 10;
+
+      while (searchRadius <= maxSearchRadius) {
+        // Check all cells within current search radius
+        for (int di = -searchRadius; di <= searchRadius; di++) {
+          for (int dj = -searchRadius; dj <= searchRadius; dj++) {
+            // Only check cells on the perimeter of the search radius
+            if (Math.Abs(di) != searchRadius && Math.Abs(dj) != searchRadius) {
+              continue;
+            }
+
+            int checkI = sinkI + di;
+            int checkJ = sinkJ + dj;
+
+            // Check bounds
+            if (checkI < 0 || checkI >= xCount || checkJ < 0 || checkJ >= yCount) {
+              continue;
+            }
+
+            int neighborBasinId = basinIds[checkI, checkJ];
+
+            // Found a different basin near the sink
+            // Prefer interior basins (non-edge) but accept edge basins as fallback
+            if (neighborBasinId >= 0 && neighborBasinId != edgeBasinId) {
+              // Return first interior basin found (best match)
+              if (!edgeBasinIds.Contains(neighborBasinId)) {
+                return neighborBasinId;
+              }
+            }
+          }
+        }
+
+        searchRadius++;
+      }
+
+      // Fallback: if no interior neighbor found, find ANY neighbor using lowest boundary
+      return FindBestNeighborBasin(basinIds, edgeBasinId, gradientMap, xCount, yCount);
+    }
+
+    /// <summary>
+    /// Build merge clusters using union-find approach
+    /// Handles complex cases like edge1→edge2→interior or multiple edges→same interior
+    /// Returns mapping from original basin ID to cluster root (final basin ID)
+    /// </summary>
+    private Dictionary<int, int> BuildMergeClusters(
+        Dictionary<int, int> edgeBasinToInteriorNeighbor, HashSet<int> edgeBasinIds) {
+      // Union-Find data structure
+      Dictionary<int, int> parent = new Dictionary<int, int>();
+
+      // Initialize: each basin is its own parent
+      foreach (var kvp in edgeBasinToInteriorNeighbor) {
+        if (!parent.ContainsKey(kvp.Key)) {
+          parent[kvp.Key] = kvp.Key;
+        }
+        if (!parent.ContainsKey(kvp.Value)) {
+          parent[kvp.Value] = kvp.Value;
+        }
+      }
+
+      // Union operation: merge edge basin with its target
+      foreach (var kvp in edgeBasinToInteriorNeighbor) {
+        int edgeBasin = kvp.Key;
+        int targetBasin = kvp.Value;
+
+        Union(parent, edgeBasin, targetBasin);
+      }
+
+      // Find root for all basins (with path compression)
+      Dictionary<int, int> basinToClusterRoot = new Dictionary<int, int>();
+      foreach (var basinId in parent.Keys) {
+        basinToClusterRoot[basinId] = Find(parent, basinId);
+      }
+
+      // Ensure interior basins (non-edge) become cluster roots
+      // If an interior basin merged with another interior basin, keep one as root
+      foreach (var kvp in basinToClusterRoot.ToList()) {
+        int basinId = kvp.Key;
+        int root = kvp.Value;
+
+        // If this is an edge basin, make sure its root is an interior basin
+        if (edgeBasinIds.Contains(basinId) && edgeBasinIds.Contains(root)) {
+          // Both are edge basins - need to find the ultimate interior target
+          // This handles chains like edge1→edge2→interior
+          int ultimateTarget =
+              FindUltimateInteriorTarget(basinId, edgeBasinToInteriorNeighbor, edgeBasinIds);
+          if (ultimateTarget >= 0) {
+            basinToClusterRoot[basinId] = ultimateTarget;
+          }
+        }
+      }
+
+      return basinToClusterRoot;
+    }
+
+    /// <summary>
+    /// Find operation for union-find (with path compression)
+    /// </summary>
+    private int Find(Dictionary<int, int> parent, int id) {
+      if (parent[id] != id) {
+        parent[id] = Find(parent, parent[id]);  // Path compression
+      }
+      return parent[id];
+    }
+
+    /// <summary>
+    /// Union operation for union-find
+    /// </summary>
+    private void Union(Dictionary<int, int> parent, int id1, int id2) {
+      int root1 = Find(parent, id1);
+      int root2 = Find(parent, id2);
+
+      if (root1 != root2) {
+        // Always make the larger ID the parent (arbitrary choice for consistency)
+        if (root1 < root2) {
+          parent[root1] = root2;
+        } else {
+          parent[root2] = root1;
+        }
+      }
+    }
+
+    /// <summary>
+    /// Find the ultimate interior basin target by following merge chain
+    /// Handles cases like edge1→edge2→edge3→interior
+    /// </summary>
+    private int FindUltimateInteriorTarget(int startBasinId,
+                                           Dictionary<int, int> edgeBasinToInteriorNeighbor,
+                                           HashSet<int> edgeBasinIds) {
+      HashSet<int> visited = new HashSet<int>();
+      int currentBasin = startBasinId;
+      int maxSteps = 100;  // Safety limit
+
+      for (int step = 0; step < maxSteps; step++) {
+        if (visited.Contains(currentBasin)) {
+          return -1;  // Circular reference detected
+        }
+        visited.Add(currentBasin);
+
+        // If this basin is interior (not edge), we found the target
+        if (!edgeBasinIds.Contains(currentBasin)) {
+          return currentBasin;
+        }
+
+        // Follow the merge chain
+        if (edgeBasinToInteriorNeighbor.ContainsKey(currentBasin)) {
+          currentBasin = edgeBasinToInteriorNeighbor[currentBasin];
+        } else {
+          return -1;  // No target found
+        }
+      }
+
+      return -1;  // Max steps exceeded
+    }
+
+    /// <summary>
+    /// Renumber basins to be sequential (remove gaps from merged basins)
+    /// </summary>
+    private void RenumberBasins(int[,] basinIds, int xCount, int yCount, ref int basinCount) {
       Dictionary<int, int> oldToNew = new Dictionary<int, int>();
       int newBasinId = 0;
 
@@ -951,7 +1183,8 @@ namespace BeingAliveTerrain {
     }
 
     /// <summary>
-    /// Extract mesh faces belonging to a specific basin (preserves original mesh geometry)
+    /// Extract mesh faces belonging to a specific basin (preserves original mesh
+    /// geometry)
     /// </summary>
     private Mesh ExtractBasinFromOriginalMesh(Mesh originalMesh, int[] vertexBasinIds,
                                               int basinId) {
@@ -1012,8 +1245,9 @@ namespace BeingAliveTerrain {
     }
 
     /// <summary>
-    /// Remove isolated mesh fragments, keeping only the largest connected component
-    /// This cleans up small disconnected pieces that result from basin merging
+    /// Remove isolated mesh fragments, keeping only the largest connected
+    /// component This cleans up small disconnected pieces that result from basin
+    /// merging
     /// </summary>
     private Mesh RemoveIsolatedFragments(Mesh mesh) {
       if (mesh == null || mesh.Faces.Count == 0) {
@@ -1022,7 +1256,7 @@ namespace BeingAliveTerrain {
 
       // Build face connectivity graph
       Dictionary<int, HashSet<int>> faceNeighbors = new Dictionary<int, HashSet<int>>();
-      
+
       // For each face, find neighboring faces (faces that share an edge)
       for (int f = 0; f < mesh.Faces.Count; f++) {
         faceNeighbors[f] = new HashSet<int>();
@@ -1030,10 +1264,10 @@ namespace BeingAliveTerrain {
 
       // Build edge-to-faces mapping
       Dictionary<(int, int), List<int>> edgeToFaces = new Dictionary<(int, int), List<int>>();
-      
+
       for (int f = 0; f < mesh.Faces.Count; f++) {
         MeshFace face = mesh.Faces[f];
-        
+
         // Get face edges
         List<(int v0, int v1)> edges = new List<(int, int)>();
         if (face.IsQuad) {
@@ -1117,26 +1351,25 @@ namespace BeingAliveTerrain {
 
       foreach (int faceIndex in largestComponent) {
         MeshFace face = mesh.Faces[faceIndex];
-        
-        int[] faceVertices = face.IsQuad 
-            ? new int[] { face.A, face.B, face.C, face.D }
-            : new int[] { face.A, face.B, face.C };
+
+        int[] faceVertices = face.IsQuad ? new int[] { face.A, face.B, face.C, face.D }
+                                         : new int[] { face.A, face.B, face.C };
 
         int[] newIndices = new int[faceVertices.Length];
 
         for (int i = 0; i < faceVertices.Length; i++) {
           int oldIndex = faceVertices[i];
-          
+
           if (!oldToNewVertexIndex.ContainsKey(oldIndex)) {
             oldToNewVertexIndex[oldIndex] = cleanedMesh.Vertices.Count;
             cleanedMesh.Vertices.Add(mesh.Vertices[oldIndex]);
-            
+
             // Preserve vertex colors if they exist
             if (oldIndex < mesh.VertexColors.Count) {
               cleanedMesh.VertexColors.Add(mesh.VertexColors[oldIndex]);
             }
           }
-          
+
           newIndices[i] = oldToNewVertexIndex[oldIndex];
         }
 
@@ -1179,7 +1412,8 @@ namespace BeingAliveTerrain {
     }
 
     /// <summary>
-    /// Extract boundary curve from watershed mesh by finding naked edges (boundary edges)
+    /// Extract boundary curve from watershed mesh by finding naked edges
+    /// (boundary edges)
     /// </summary>
     private Curve ExtractBoundaryFromWatershedMesh(Mesh watershedMesh) {
       if (watershedMesh == null || watershedMesh.Vertices.Count < 3) {
@@ -1255,7 +1489,8 @@ namespace BeingAliveTerrain {
     /// Extract boundary edges from mesh where vertices belong to different basins
     /// </summary>
     private Curve ExtractBoundaryFromMeshEdges(Mesh mesh, int[] vertexBasinIds, int basinId) {
-      // Find all boundary edges (edges where one vertex is in basin, other is not)
+      // Find all boundary edges (edges where one vertex is in basin, other is
+      // not)
       List<Line> boundaryEdges = new List<Line>();
       HashSet<(int, int)> processedEdges = new HashSet<(int, int)>();
 
