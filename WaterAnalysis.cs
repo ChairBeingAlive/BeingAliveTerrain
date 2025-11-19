@@ -465,7 +465,7 @@ namespace BeingAliveTerrain {
     public Watershed()
         : base("Watershed", "batWatershed",
                "Automatically segment terrain into watershed (drainage basin) regions. " +
-               "Each basin drains to a natural low point (sink) in the terrain.",
+                   "Each basin drains to a natural low point (sink) in the terrain.",
                "BAT", "Analysis") {}
 
     public override GH_Exposure Exposure => GH_Exposure.primary;
@@ -520,8 +520,8 @@ namespace BeingAliveTerrain {
       // Auto-derive resolution from mesh if not provided
       if (resolution <= 0) {
         resolution = DeriveResolutionFromMesh(terrain, bbox);
-        AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, 
-                         $"Auto-derived resolution: {resolution:F2} units");
+        AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                          $"Auto-derived resolution: {resolution:F2} units");
       }
 
       // Rebuild normals
@@ -536,13 +536,15 @@ namespace BeingAliveTerrain {
       var segmentation = SegmentWatersheds(gradientMap, bbox, resolution, minArea);
 
       if (segmentation.BasinCount == 0) {
-        AddRuntimeMessage(GH_RuntimeMessageLevel.Warning, 
+        AddRuntimeMessage(
+            GH_RuntimeMessageLevel.Warning,
             "No watersheds found. Terrain may be flat or have no clear drainage patterns.");
         return;
       }
 
       // Assign mesh vertices to basins
-      int[] vertexBasinIds = AssignVerticesToBasins(terrain, segmentation, gradientMap, bbox, resolution);
+      int[] vertexBasinIds =
+          AssignVerticesToBasins(terrain, segmentation, gradientMap, bbox, resolution);
 
       // Extract mesh pieces for each basin
       List<Mesh> watershedMeshes = new List<Mesh>();
@@ -553,17 +555,26 @@ namespace BeingAliveTerrain {
         // Extract original mesh faces for this basin
         var basinMesh = ExtractBasinFromOriginalMesh(terrain, vertexBasinIds, basinId);
         if (basinMesh != null && basinMesh.Vertices.Count > 0) {
-          watershedMeshes.Add(basinMesh);
+          // Clean up isolated fragments - keep only the largest connected component
+          basinMesh = RemoveIsolatedFragments(basinMesh);
+          
+          if (basinMesh != null && basinMesh.Vertices.Count > 0) {
+            watershedMeshes.Add(basinMesh);
 
-          // Extract boundary from mesh edges
-          var boundary = ExtractBoundaryFromMeshEdges(terrain, vertexBasinIds, basinId);
-          if (boundary != null) {
-            boundaries.Add(boundary);
+            // Calculate sink point directly from the cleaned watershed mesh
+            // This ensures the sink is within the actual mesh after fragment removal
+            Point3d sinkPoint = FindLowestPointInMesh(basinMesh);
+            sinks.Add(sinkPoint);
           }
+        }
+      }
 
-          // Get sink point
-          var sinkPoint = segmentation.GetSinkPoint(basinId, gradientMap, bbox, resolution);
-          sinks.Add(sinkPoint);
+      // Extract boundaries DIRECTLY from each watershed mesh using naked edges
+      // This ensures boundaries are correct after all merging operations
+      for (int i = 0; i < watershedMeshes.Count; i++) {
+        var boundary = ExtractBoundaryFromWatershedMesh(watershedMeshes[i]);
+        if (boundary != null) {
+          boundaries.Add(boundary);
         }
       }
 
@@ -572,8 +583,8 @@ namespace BeingAliveTerrain {
       DA.SetDataList("Boundaries", boundaries);
       DA.SetDataList("Sinks", sinks);
 
-      AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, 
-                       $"Found {segmentation.BasinCount} watershed basins");
+      AddRuntimeMessage(GH_RuntimeMessageLevel.Remark,
+                        $"Found {segmentation.BasinCount} watershed basins");
     }
 
     /// <summary>
@@ -619,8 +630,8 @@ namespace BeingAliveTerrain {
       }
 
       // Step 1: Find drainage targets
-      (int i, int j)[,] drainageTarget = new (int, int)[xCount, yCount];
-      
+      (int i, int j)[,] drainageTarget = new(int, int)[xCount, yCount];
+
       for (int i = 0; i < xCount; i++) {
         for (int j = 0; j < yCount; j++) {
           if (double.IsNaN(gradientMap.Heights[i, j])) {
@@ -628,14 +639,12 @@ namespace BeingAliveTerrain {
             continue;
           }
 
-          Point3d cellCenter = new Point3d(
-              bbox.Min.X + (i + 0.5) * gridSize,
-              bbox.Min.Y + (j + 0.5) * gridSize,
-              gradientMap.Heights[i, j]
-          );
+          Point3d cellCenter =
+              new Point3d(bbox.Min.X + (i + 0.5) * gridSize, bbox.Min.Y + (j + 0.5) * gridSize,
+                          gradientMap.Heights[i, j]);
 
           Vector3d gradient = gradientMap.Gradients[i, j];
-          
+
           if (gradient == Vector3d.Zero || gradient.Length < 0.001) {
             drainageTarget[i, j] = (i, j);
           } else {
@@ -672,7 +681,7 @@ namespace BeingAliveTerrain {
           }
 
           var sink = TraceToDrainageSink(i, j, drainageTarget, xCount, yCount);
-          
+
           if (sink.i < 0) {
             continue;
           }
@@ -690,18 +699,23 @@ namespace BeingAliveTerrain {
         MergeSmallBasins(basinIds, gradientMap, gridSize, minArea, ref currentBasinId);
       }
 
-      return new WatershedSegmentation {
-        BasinIds = basinIds,
-        BasinCount = currentBasinId,
-        SinkToBasinId = sinkToBasinId,
-        XCount = xCount,
-        YCount = yCount
-      };
+      // Step 4: Detect and merge edge basins (watersheds with sinks on boundaries)
+      // These represent incomplete catchments where water flows off the mesh
+      List<int> edgeBasinIds =
+          DetectEdgeBasins(basinIds, sinkToBasinId, gradientMap, xCount, yCount, gridSize * 1.5);
+
+      if (edgeBasinIds.Count > 0) {
+        MergeEdgeBasins(basinIds, edgeBasinIds, gradientMap, xCount, yCount, ref currentBasinId);
+      }
+
+      return new WatershedSegmentation { BasinIds = basinIds, BasinCount = currentBasinId,
+                                         SinkToBasinId = sinkToBasinId, XCount = xCount,
+                                         YCount = yCount };
     }
 
-    private (int i, int j) TraceToDrainageSink(int startI, int startJ,
-                                               (int i, int j)[,] drainageTarget,
-                                               int xCount, int yCount) {
+    private (int i, int j)
+        TraceToDrainageSink(int startI, int startJ, (int i, int j)[,] drainageTarget, int xCount,
+                            int yCount) {
       int currentI = startI;
       int currentJ = startJ;
       HashSet<(int, int)> visited = new HashSet<(int, int)>();
@@ -718,7 +732,7 @@ namespace BeingAliveTerrain {
         visited.Add((currentI, currentJ));
 
         var target = drainageTarget[currentI, currentJ];
-        
+
         if (target.i == currentI && target.j == currentJ) {
           return (currentI, currentJ);
         }
@@ -755,8 +769,9 @@ namespace BeingAliveTerrain {
           double area = kvp.Value * cellArea;
 
           if (area < minArea) {
-            int bestNeighbor = FindBestNeighborBasin(basinIds, basinId, gradientMap, xCount, yCount);
-            
+            int bestNeighbor =
+                FindBestNeighborBasin(basinIds, basinId, gradientMap, xCount, yCount);
+
             if (bestNeighbor >= 0) {
               for (int i = 0; i < xCount; i++) {
                 for (int j = 0; j < yCount; j++) {
@@ -785,17 +800,18 @@ namespace BeingAliveTerrain {
 
           for (int di = -1; di <= 1; di++) {
             for (int dj = -1; dj <= 1; dj++) {
-              if (di == 0 && dj == 0) continue;
+              if (di == 0 && dj == 0)
+                continue;
 
               int ni = i + di;
               int nj = j + dj;
 
               if (ni >= 0 && ni < xCount && nj >= 0 && nj < yCount) {
                 int neighborBasin = basinIds[ni, nj];
-                
+
                 if (neighborBasin >= 0 && neighborBasin != basinId) {
                   double height = gradientMap.Heights[i, j];
-                  
+
                   if (!neighborMinHeights.ContainsKey(neighborBasin) ||
                       height < neighborMinHeights[neighborBasin]) {
                     neighborMinHeights[neighborBasin] = height;
@@ -815,10 +831,106 @@ namespace BeingAliveTerrain {
     }
 
     /// <summary>
+    /// Detect basins whose sinks are on or near the mesh boundary
+    /// Recalculates sink locations from current basin assignments (after merging)
+    /// </summary>
+    private List<int> DetectEdgeBasins(int[,] basinIds,
+                                       Dictionary<(int, int), int> oldSinkToBasinId,
+                                       GradientMap gradientMap, int xCount, int yCount,
+                                       double edgeTolerance) {
+      List<int> edgeBasinIds = new List<int>();
+
+      // Get all unique basin IDs currently in the grid
+      HashSet<int> activeBasinIds = new HashSet<int>();
+      for (int i = 0; i < xCount; i++) {
+        for (int j = 0; j < yCount; j++) {
+          if (basinIds[i, j] >= 0) {
+            activeBasinIds.Add(basinIds[i, j]);
+          }
+        }
+      }
+
+      // For each active basin, find its current sink location
+      foreach (int basinId in activeBasinIds) {
+        double minHeight = double.MaxValue;
+        int sinkI = -1, sinkJ = -1;
+
+        // Find the lowest point in this basin (current sink)
+        for (int i = 0; i < xCount; i++) {
+          for (int j = 0; j < yCount; j++) {
+            if (basinIds[i, j] == basinId) {
+              double height = gradientMap.Heights[i, j];
+              if (!double.IsNaN(height) && height < minHeight) {
+                minHeight = height;
+                sinkI = i;
+                sinkJ = j;
+              }
+            }
+          }
+        }
+
+        // Check if this sink is near any boundary
+        if (sinkI >= 0 && sinkJ >= 0) {
+          bool isNearEdge =
+              (sinkI <= 1 || sinkI >= xCount - 2 || sinkJ <= 1 || sinkJ >= yCount - 2);
+
+          if (isNearEdge) {
+            edgeBasinIds.Add(basinId);
+          }
+        }
+      }
+
+      return edgeBasinIds;
+    }
+
+    /// <summary>
+    /// Merge edge basins into their best neighboring interior basin
+    /// </summary>
+    private void MergeEdgeBasins(int[,] basinIds, List<int> edgeBasinIds, GradientMap gradientMap,
+                                 int xCount, int yCount, ref int basinCount) {
+      // Process each edge basin
+      foreach (int edgeBasinId in edgeBasinIds) {
+        // Find best neighbor (prefer interior basins)
+        int bestNeighbor =
+            FindBestNeighborBasin(basinIds, edgeBasinId, gradientMap, xCount, yCount);
+
+        if (bestNeighbor >= 0) {
+          // Merge edge basin into neighbor
+          for (int i = 0; i < xCount; i++) {
+            for (int j = 0; j < yCount; j++) {
+              if (basinIds[i, j] == edgeBasinId) {
+                basinIds[i, j] = bestNeighbor;
+              }
+            }
+          }
+        }
+      }
+
+      // Renumber basins to be sequential (remove gaps from merged basins)
+      Dictionary<int, int> oldToNew = new Dictionary<int, int>();
+      int newBasinId = 0;
+
+      for (int i = 0; i < xCount; i++) {
+        for (int j = 0; j < yCount; j++) {
+          int oldId = basinIds[i, j];
+          if (oldId >= 0) {
+            if (!oldToNew.ContainsKey(oldId)) {
+              oldToNew[oldId] = newBasinId++;
+            }
+            basinIds[i, j] = oldToNew[oldId];
+          }
+        }
+      }
+
+      basinCount = newBasinId;
+    }
+
+    /// <summary>
     /// Assign each mesh vertex to a watershed basin based on its location
     /// </summary>
     private int[] AssignVerticesToBasins(Mesh mesh, WatershedSegmentation segmentation,
-                                         GradientMap gradientMap, BoundingBox bbox, double gridSize) {
+                                         GradientMap gradientMap, BoundingBox bbox,
+                                         double gridSize) {
       int[] vertexBasinIds = new int[mesh.Vertices.Count];
 
       for (int v = 0; v < mesh.Vertices.Count; v++) {
@@ -841,7 +953,8 @@ namespace BeingAliveTerrain {
     /// <summary>
     /// Extract mesh faces belonging to a specific basin (preserves original mesh geometry)
     /// </summary>
-    private Mesh ExtractBasinFromOriginalMesh(Mesh originalMesh, int[] vertexBasinIds, int basinId) {
+    private Mesh ExtractBasinFromOriginalMesh(Mesh originalMesh, int[] vertexBasinIds,
+                                              int basinId) {
       Mesh basinMesh = new Mesh();
 
       // Map from original vertex indices to new basin mesh vertex indices
@@ -855,9 +968,8 @@ namespace BeingAliveTerrain {
 
         // Check if all vertices of this face belong to the basin
         bool allInBasin = true;
-        int[] faceVertices = face.IsQuad 
-            ? new int[] { face.A, face.B, face.C, face.D }
-            : new int[] { face.A, face.B, face.C };
+        int[] faceVertices = face.IsQuad ? new int[] { face.A, face.B, face.C, face.D }
+                                         : new int[] { face.A, face.B, face.C };
 
         foreach (int vi in faceVertices) {
           if (vi >= vertexBasinIds.Length || vertexBasinIds[vi] != basinId) {
@@ -869,16 +981,16 @@ namespace BeingAliveTerrain {
         if (allInBasin) {
           // Add vertices if not already added
           int[] newIndices = new int[faceVertices.Length];
-          
+
           for (int i = 0; i < faceVertices.Length; i++) {
             int origIndex = faceVertices[i];
-            
+
             if (!vertexMap.ContainsKey(origIndex)) {
               vertexMap[origIndex] = basinMesh.Vertices.Count;
               basinMesh.Vertices.Add(originalMesh.Vertices[origIndex]);
               basinMesh.VertexColors.Add(basinColor);
             }
-            
+
             newIndices[i] = vertexMap[origIndex];
           }
 
@@ -900,6 +1012,246 @@ namespace BeingAliveTerrain {
     }
 
     /// <summary>
+    /// Remove isolated mesh fragments, keeping only the largest connected component
+    /// This cleans up small disconnected pieces that result from basin merging
+    /// </summary>
+    private Mesh RemoveIsolatedFragments(Mesh mesh) {
+      if (mesh == null || mesh.Faces.Count == 0) {
+        return mesh;
+      }
+
+      // Build face connectivity graph
+      Dictionary<int, HashSet<int>> faceNeighbors = new Dictionary<int, HashSet<int>>();
+      
+      // For each face, find neighboring faces (faces that share an edge)
+      for (int f = 0; f < mesh.Faces.Count; f++) {
+        faceNeighbors[f] = new HashSet<int>();
+      }
+
+      // Build edge-to-faces mapping
+      Dictionary<(int, int), List<int>> edgeToFaces = new Dictionary<(int, int), List<int>>();
+      
+      for (int f = 0; f < mesh.Faces.Count; f++) {
+        MeshFace face = mesh.Faces[f];
+        
+        // Get face edges
+        List<(int v0, int v1)> edges = new List<(int, int)>();
+        if (face.IsQuad) {
+          edges.Add((face.A, face.B));
+          edges.Add((face.B, face.C));
+          edges.Add((face.C, face.D));
+          edges.Add((face.D, face.A));
+        } else {
+          edges.Add((face.A, face.B));
+          edges.Add((face.B, face.C));
+          edges.Add((face.C, face.A));
+        }
+
+        foreach (var (v0, v1) in edges) {
+          // Ensure consistent edge ordering
+          int minV = Math.Min(v0, v1);
+          int maxV = Math.Max(v0, v1);
+          var edgeKey = (minV, maxV);
+
+          if (!edgeToFaces.ContainsKey(edgeKey)) {
+            edgeToFaces[edgeKey] = new List<int>();
+          }
+          edgeToFaces[edgeKey].Add(f);
+        }
+      }
+
+      // Build face neighbor relationships
+      foreach (var facesOnEdge in edgeToFaces.Values) {
+        if (facesOnEdge.Count >= 2) {
+          // Faces sharing an edge are neighbors
+          for (int i = 0; i < facesOnEdge.Count; i++) {
+            for (int j = i + 1; j < facesOnEdge.Count; j++) {
+              faceNeighbors[facesOnEdge[i]].Add(facesOnEdge[j]);
+              faceNeighbors[facesOnEdge[j]].Add(facesOnEdge[i]);
+            }
+          }
+        }
+      }
+
+      // Find connected components using BFS
+      List<HashSet<int>> components = new List<HashSet<int>>();
+      HashSet<int> visited = new HashSet<int>();
+
+      for (int startFace = 0; startFace < mesh.Faces.Count; startFace++) {
+        if (visited.Contains(startFace)) {
+          continue;
+        }
+
+        // BFS to find all faces in this connected component
+        HashSet<int> component = new HashSet<int>();
+        Queue<int> queue = new Queue<int>();
+        queue.Enqueue(startFace);
+        visited.Add(startFace);
+
+        while (queue.Count > 0) {
+          int face = queue.Dequeue();
+          component.Add(face);
+
+          foreach (int neighbor in faceNeighbors[face]) {
+            if (!visited.Contains(neighbor)) {
+              visited.Add(neighbor);
+              queue.Enqueue(neighbor);
+            }
+          }
+        }
+
+        components.Add(component);
+      }
+
+      // If there's only one component, no cleanup needed
+      if (components.Count <= 1) {
+        return mesh;
+      }
+
+      // Find the largest component
+      HashSet<int> largestComponent = components.OrderByDescending(c => c.Count).First();
+
+      // Create new mesh with only faces from the largest component
+      Mesh cleanedMesh = new Mesh();
+      Dictionary<int, int> oldToNewVertexIndex = new Dictionary<int, int>();
+
+      foreach (int faceIndex in largestComponent) {
+        MeshFace face = mesh.Faces[faceIndex];
+        
+        int[] faceVertices = face.IsQuad 
+            ? new int[] { face.A, face.B, face.C, face.D }
+            : new int[] { face.A, face.B, face.C };
+
+        int[] newIndices = new int[faceVertices.Length];
+
+        for (int i = 0; i < faceVertices.Length; i++) {
+          int oldIndex = faceVertices[i];
+          
+          if (!oldToNewVertexIndex.ContainsKey(oldIndex)) {
+            oldToNewVertexIndex[oldIndex] = cleanedMesh.Vertices.Count;
+            cleanedMesh.Vertices.Add(mesh.Vertices[oldIndex]);
+            
+            // Preserve vertex colors if they exist
+            if (oldIndex < mesh.VertexColors.Count) {
+              cleanedMesh.VertexColors.Add(mesh.VertexColors[oldIndex]);
+            }
+          }
+          
+          newIndices[i] = oldToNewVertexIndex[oldIndex];
+        }
+
+        // Add face
+        if (face.IsQuad) {
+          cleanedMesh.Faces.AddFace(newIndices[0], newIndices[1], newIndices[2], newIndices[3]);
+        } else {
+          cleanedMesh.Faces.AddFace(newIndices[0], newIndices[1], newIndices[2]);
+        }
+      }
+
+      if (cleanedMesh.Vertices.Count > 0) {
+        cleanedMesh.Normals.ComputeNormals();
+        cleanedMesh.Compact();
+      }
+
+      return cleanedMesh;
+    }
+
+    /// <summary>
+    /// Find the lowest point (sink) in a watershed mesh
+    /// </summary>
+    private Point3d FindLowestPointInMesh(Mesh mesh) {
+      if (mesh == null || mesh.Vertices.Count == 0) {
+        return Point3d.Unset;
+      }
+
+      Point3d lowestPoint = mesh.Vertices[0];
+      double minZ = lowestPoint.Z;
+
+      for (int i = 1; i < mesh.Vertices.Count; i++) {
+        Point3d vertex = mesh.Vertices[i];
+        if (vertex.Z < minZ) {
+          minZ = vertex.Z;
+          lowestPoint = vertex;
+        }
+      }
+
+      return lowestPoint;
+    }
+
+    /// <summary>
+    /// Extract boundary curve from watershed mesh by finding naked edges (boundary edges)
+    /// </summary>
+    private Curve ExtractBoundaryFromWatershedMesh(Mesh watershedMesh) {
+      if (watershedMesh == null || watershedMesh.Vertices.Count < 3) {
+        return null;
+      }
+
+      // Find naked edges (edges that belong to only one face = boundary)
+      Dictionary<(int, int), int> edgeCount = new Dictionary<(int, int), int>();
+      Dictionary<(int, int), Line> edgeGeometry = new Dictionary<(int, int), Line>();
+
+      // Count each edge
+      for (int f = 0; f < watershedMesh.Faces.Count; f++) {
+        MeshFace face = watershedMesh.Faces[f];
+
+        // Get face edges
+        List<(int v0, int v1)> edges = new List<(int, int)>();
+        if (face.IsQuad) {
+          edges.Add((face.A, face.B));
+          edges.Add((face.B, face.C));
+          edges.Add((face.C, face.D));
+          edges.Add((face.D, face.A));
+        } else {
+          edges.Add((face.A, face.B));
+          edges.Add((face.B, face.C));
+          edges.Add((face.C, face.A));
+        }
+
+        // Count each edge
+        foreach (var (v0, v1) in edges) {
+          // Ensure consistent edge ordering
+          int minV = Math.Min(v0, v1);
+          int maxV = Math.Max(v0, v1);
+          var edgeKey = (minV, maxV);
+
+          if (!edgeCount.ContainsKey(edgeKey)) {
+            edgeCount[edgeKey] = 0;
+            edgeGeometry[edgeKey] =
+                new Line(watershedMesh.Vertices[v0], watershedMesh.Vertices[v1]);
+          }
+          edgeCount[edgeKey]++;
+        }
+      }
+
+      // Collect naked edges (edges with count == 1 = boundary edges)
+      List<Line> boundaryEdges = new List<Line>();
+      foreach (var kvp in edgeCount) {
+        if (kvp.Value == 1) {  // Naked edge = boundary
+          boundaryEdges.Add(edgeGeometry[kvp.Key]);
+        }
+      }
+
+      if (boundaryEdges.Count == 0) {
+        return null;
+      }
+
+      // Connect boundary edges into a continuous path
+      List<Point3d> boundaryPoints = ConnectBoundaryEdges(boundaryEdges);
+
+      if (boundaryPoints.Count >= 3) {
+        // Close the curve if not already closed
+        if (boundaryPoints[0].DistanceTo(boundaryPoints[boundaryPoints.Count - 1]) > 0.001) {
+          boundaryPoints.Add(boundaryPoints[0]);
+        }
+
+        Polyline polyline = new Polyline(boundaryPoints);
+        return polyline.ToNurbsCurve();
+      }
+
+      return null;
+    }
+
+    /// <summary>
     /// Extract boundary edges from mesh where vertices belong to different basins
     /// </summary>
     private Curve ExtractBoundaryFromMeshEdges(Mesh mesh, int[] vertexBasinIds, int basinId) {
@@ -909,7 +1261,7 @@ namespace BeingAliveTerrain {
 
       for (int f = 0; f < mesh.Faces.Count; f++) {
         MeshFace face = mesh.Faces[f];
-        
+
         // Get face edges
         List<(int v0, int v1)> edges = new List<(int, int)>();
         if (face.IsQuad) {
@@ -928,7 +1280,7 @@ namespace BeingAliveTerrain {
           // Ensure consistent edge ordering
           int minV = Math.Min(v0, v1);
           int maxV = Math.Max(v0, v1);
-          
+
           if (processedEdges.Contains((minV, maxV))) {
             continue;
           }
@@ -937,7 +1289,7 @@ namespace BeingAliveTerrain {
           int basin1 = vertexBasinIds[v1];
 
           // Boundary edge: one vertex in basin, other not
-          if ((basin0 == basinId && basin1 != basinId) || 
+          if ((basin0 == basinId && basin1 != basinId) ||
               (basin1 == basinId && basin0 != basinId)) {
             boundaryEdges.Add(new Line(mesh.Vertices[v0], mesh.Vertices[v1]));
             processedEdges.Add((minV, maxV));
@@ -951,13 +1303,13 @@ namespace BeingAliveTerrain {
 
       // Connect boundary edges into a polyline
       List<Point3d> boundaryPoints = ConnectBoundaryEdges(boundaryEdges);
-      
+
       if (boundaryPoints.Count >= 3) {
         // Close the curve
         if (boundaryPoints[0].DistanceTo(boundaryPoints[boundaryPoints.Count - 1]) > 0.001) {
           boundaryPoints.Add(boundaryPoints[0]);
         }
-        
+
         Polyline polyline = new Polyline(boundaryPoints);
         return polyline.ToNurbsCurve();
       }
@@ -975,7 +1327,7 @@ namespace BeingAliveTerrain {
 
       List<Point3d> path = new List<Point3d>();
       HashSet<int> usedEdges = new HashSet<int>();
-      
+
       // Start with first edge
       path.Add(edges[0].From);
       path.Add(edges[0].To);
@@ -1002,7 +1354,7 @@ namespace BeingAliveTerrain {
             bestEdge = i;
             reverseEdge = false;
           }
-          
+
           if (distTo < minDist) {
             minDist = distTo;
             bestEdge = i;
@@ -1011,7 +1363,7 @@ namespace BeingAliveTerrain {
         }
 
         if (bestEdge < 0 || minDist > 0.1) {
-          break; // Can't connect more edges
+          break;  // Can't connect more edges
         }
 
         // Add next edge
@@ -1020,7 +1372,7 @@ namespace BeingAliveTerrain {
         } else {
           path.Add(edges[bestEdge].To);
         }
-        
+
         usedEdges.Add(bestEdge);
       }
 
@@ -1037,18 +1389,29 @@ namespace BeingAliveTerrain {
       double m = value - c;
 
       double r = 0, g = 0, b = 0;
-      if (hue < 60) { r = c; g = x; }
-      else if (hue < 120) { r = x; g = c; }
-      else if (hue < 180) { g = c; b = x; }
-      else if (hue < 240) { g = x; b = c; }
-      else if (hue < 300) { r = x; b = c; }
-      else { r = c; b = x; }
+      if (hue < 60) {
+        r = c;
+        g = x;
+      } else if (hue < 120) {
+        r = x;
+        g = c;
+      } else if (hue < 180) {
+        g = c;
+        b = x;
+      } else if (hue < 240) {
+        g = x;
+        b = c;
+      } else if (hue < 300) {
+        r = x;
+        b = c;
+      } else {
+        r = c;
+        b = x;
+      }
 
-      return System.Drawing.Color.FromArgb(
-          (int)Math.Round((r + m) * 255),
-          (int)Math.Round((g + m) * 255),
-          (int)Math.Round((b + m) * 255)
-      );
+      return System.Drawing.Color.FromArgb((int)Math.Round((r + m) * 255),
+                                           (int)Math.Round((g + m) * 255),
+                                           (int)Math.Round((b + m) * 255));
     }
 
     public override void AppendAdditionalMenuItems(ToolStripDropDown menu) {
@@ -1091,7 +1454,7 @@ namespace BeingAliveTerrain {
     }
 
     public Point3d GetSinkPoint(int basinId, GradientMap gradientMap, BoundingBox bbox,
-                               double gridSize) {
+                                double gridSize) {
       double minHeight = double.MaxValue;
       int sinkI = -1, sinkJ = -1;
 
@@ -1109,11 +1472,8 @@ namespace BeingAliveTerrain {
       }
 
       if (sinkI >= 0) {
-        return new Point3d(
-            bbox.Min.X + (sinkI + 0.5) * gridSize,
-            bbox.Min.Y + (sinkJ + 0.5) * gridSize,
-            minHeight
-        );
+        return new Point3d(bbox.Min.X + (sinkI + 0.5) * gridSize,
+                           bbox.Min.Y + (sinkJ + 0.5) * gridSize, minHeight);
       }
 
       return Point3d.Unset;
