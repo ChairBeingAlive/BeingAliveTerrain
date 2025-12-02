@@ -83,6 +83,16 @@ namespace BeingAliveTerrain.Properties {
         /// <summary>
         ///   Looks up a localized resource of type System.Drawing.Bitmap.
         /// </summary>
+        internal static System.Drawing.Bitmap crossSection {
+            get {
+                object obj = ResourceManager.GetObject("crossSection", resourceCulture);
+                return ((System.Drawing.Bitmap)(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Drawing.Bitmap.
+        /// </summary>
         internal static System.Drawing.Bitmap curveEdit {
             get {
                 object obj = ResourceManager.GetObject("curveEdit", resourceCulture);

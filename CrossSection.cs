@@ -16,8 +16,7 @@ public class CrossSection : GH_Component {
   public override GH_Exposure Exposure => GH_Exposure.primary;
   public override Guid ComponentGuid => new Guid("6c512b4b-2503-4ba0-b49e-896614bbacf4");
 
-  // TODO: Add a custom icon for this component
-  // protected override System.Drawing.Bitmap Icon => Properties.Resources.crossSection;
+  protected override System.Drawing.Bitmap Icon => Properties.Resources.crossSection;
 
   protected override void RegisterInputParams(GH_InputParamManager pManager) {
     pManager.AddMeshParameter("Mesh", "M", "Existing terrain mesh to analyze.", GH_ParamAccess.item);
