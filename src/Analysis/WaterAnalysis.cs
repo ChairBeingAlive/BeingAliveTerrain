@@ -322,7 +322,7 @@ public class Watershed : GH_Component {
 
   public override GH_Exposure Exposure => GH_Exposure.primary;
   public override Guid ComponentGuid => new Guid("3a5e9cd7-531d-4cf9-a185-f29b2f85a92c");
-  protected override System.Drawing.Bitmap Icon => null;  // TODO: Add icon
+  protected override System.Drawing.Bitmap Icon => Properties.Resources.waterShed;
 
   protected override void RegisterInputParams(GH_InputParamManager pManager) {
     pManager.AddMeshParameter("Mesh", "M", "Terrain mesh to analyze.", GH_ParamAccess.item);
