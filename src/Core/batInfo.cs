@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using Grasshopper;
 using Grasshopper.Kernel;
@@ -23,7 +23,7 @@ public class batInfo : GH_AssemblyInfo {
   public override string AuthorContact => "https://github.com/ChairBeingAlive/BeingAliveTerrain";
 
   // public override string AssemblyVersion => GetType().Assembly.GetName().Version.ToString();
-  public override string AssemblyVersion => "0.2.2";
+  public override string AssemblyVersion => "0.2.3";
 
   // this is currently the variable used by McNeel for plugin system
   public override string Version => AssemblyVersion;
